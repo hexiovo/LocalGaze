@@ -78,11 +78,11 @@ def run_realtime_gaze(estimator, draw_cloud=True, screen_width=1920, screen_heig
 
                     if blink:
                         # 若检测到眨眼，记录为 blink
-                        gaze_data.append([timestamp_str, "blink", None, None,None,None])
+                        gaze_data.append([timestamp_str,None, None, "1", None,None])
                     else:
                         # 若未眨眼，预测 gaze 坐标并记录 pupil 直径
                         x, y = estimator.predict([features])[0]
-                        gaze_data.append([timestamp_str, x, y, left_pupil_diameter, right_pupil_diameter])
+                        gaze_data.append([timestamp_str, x, y, 0,left_pupil_diameter, right_pupil_diameter])
 
                         if draw_cloud:
                             canvas.delete("all")

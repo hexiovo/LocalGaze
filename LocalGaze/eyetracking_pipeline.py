@@ -203,7 +203,7 @@ def run_eye_tracking_workflow():
         df_info = pd.DataFrame(experiment_info)
 
         # eye_data 表
-        df_eye = pd.DataFrame(eye_data, columns=["时间", "x", "y","左瞳孔直径","右瞳孔直径"])
+        df_eye = pd.DataFrame(eye_data, columns=["时间", "x", "y","blink","左瞳孔直径","右瞳孔直径"])
 
         # 保存路径
         main_path = Path.cwd()

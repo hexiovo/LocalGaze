@@ -39,3 +39,5 @@ CALL conda activate LocalGaze
 
 REM Run main.py
 python "%~dp0LocalGaze\main.py"
+
+pause

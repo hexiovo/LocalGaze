@@ -112,15 +112,25 @@ class GazeEstimator:
             thr = 0.2
         blink_detected = EAR < thr
 
-        LEFT_IRIS_INDICES = [474, 475, 476, 477, 478]  # 示例
-        RIGHT_IRIS_INDICES = [469, 470, 471, 472, 473]
+        LEFT_IRIS_INDICES = [473, 474, 475, 476, 477]  # refine=True 模式下
+        RIGHT_IRIS_INDICES = [468, 469, 470, 471, 472]
+
 
         left_iris_points = np.array([(landmarks[i].x, landmarks[i].y) for i in LEFT_IRIS_INDICES])
         right_iris_points = np.array([(landmarks[i].x, landmarks[i].y) for i in RIGHT_IRIS_INDICES])
 
-        # 计算瞳孔直径（归一化到 inter-eye distance）
-        left_pupil_diameter = np.linalg.norm(left_iris_points[0] - left_iris_points[2]) / inter_eye_dist
-        right_pupil_diameter = np.linalg.norm(right_iris_points[0] - right_iris_points[2]) / inter_eye_dist
+        # 分离中心点
+        left_center = left_iris_points[-1]  # 477 是中心
+        right_center = right_iris_points[-1]  # 472 是中心
+
+        # 计算平均半径（中心到其他边缘点的平均距离）
+        left_radius = np.mean([np.linalg.norm(p - left_center) for p in left_iris_points[:-1]])
+        right_radius = np.mean([np.linalg.norm(p - right_center) for p in right_iris_points[:-1]])
+
+        # 归一化后得到“直径”
+        left_pupil_diameter = (2 * left_radius) / inter_eye_dist
+        right_pupil_diameter = (2 * right_radius) / inter_eye_dist
+
 
         if return_more:
             return features, blink_detected, left_pupil_diameter, right_pupil_diameter

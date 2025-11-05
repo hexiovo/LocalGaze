@@ -151,7 +151,13 @@ def run_eye_tracking_workflow():
 
         draw_cloud = messagebox.askyesno("预测点显示", "是否开启预测点显示功能？")
 
-        eye_data = run_realtime_gaze(estimator, draw_cloud)
+        screen_width = root.winfo_screenwidth()  # 屏幕宽度
+        screen_height = root.winfo_screenheight()  # 屏幕高度
+
+        eye_data = run_realtime_gaze(estimator, draw_cloud,
+                                     screen_width=screen_width,
+                                     screen_height=screen_height
+                                     )
 
         # 实验结束时间
         end_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
@@ -165,16 +171,14 @@ def run_eye_tracking_workflow():
             # 历史模型，尝试从对应文件读取
             # 假设 save_calibration_results 或模型保存路径有记录
             # 这里简单示意读取 pickle 文件里的 mean_error
-            try:
-                Calibrationdata_path = model_path.replace(".pkl", ".xlsx")
-                final_mean_error = get_min_calibration_mean(Calibrationdata_path)
-                model_type , model_kwargs = get_model_info(Calibrationdata_path)
-                if final_mean_error is None:
-                    final_mean_error = "未知"
-                all_errors_per_point_add =  get_additional_calibration_mean(Calibrationdata_path)
 
-            except Exception:
+            Calibrationdata_path = model_path.replace(".pkl", ".xlsx")
+            final_mean_error = get_min_calibration_mean(Calibrationdata_path)
+            model_type , model_kwargs = get_model_info(Calibrationdata_path)
+            if final_mean_error is None:
                 final_mean_error = "未知"
+            all_errors_per_point_add =  get_additional_calibration_mean(Calibrationdata_path)
+
 
         else:
             # 新模型

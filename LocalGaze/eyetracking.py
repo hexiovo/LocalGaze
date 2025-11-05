@@ -6,6 +6,7 @@ import threading
 import time
 import tkinter as tk
 
+MAX_POINTS = 50
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.protobuf.symbol_database")
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
@@ -64,6 +65,8 @@ def run_realtime_gaze(estimator, draw_cloud=True, screen_width=1920, screen_heig
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
+        gaze_history = []  # 用于保存最近点
+
         try:
             while running:
                 ret, frame = cap.read()
@@ -85,8 +88,12 @@ def run_realtime_gaze(estimator, draw_cloud=True, screen_width=1920, screen_heig
                         gaze_data.append([timestamp_str, x, y, 0,left_pupil_diameter, right_pupil_diameter])
 
                         if draw_cloud:
-                            canvas.delete("all")
-                            draw_gaze_cloud_overlay(canvas, x, y, radius=20, color_gray="#B4B4B4",
+                            # 添加当前点到历史轨迹
+                            gaze_history.append((x, y))
+                            if len(gaze_history) > MAX_POINTS:
+                                gaze_history.pop(0)  # 超过最大长度就删除最旧点
+
+                            draw_gaze_cloud_overlay(canvas, gaze_history, radius=20, color_gray="#B4B4B4",
                                                     color_center="#FF0000", border_color="#000000",
                                                     center_radius=4, alpha=0.4)
 

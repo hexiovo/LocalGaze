@@ -104,3 +104,9 @@ V1.5.0
 V1.5.1
 
 fixed bugs
+
+ 
+
+V1.5.2
+
+killing bugs

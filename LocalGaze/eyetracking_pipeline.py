@@ -54,7 +54,7 @@ def run_eye_tracking_workflow():
         model_path = model_dir / f"{model_name}.pkl"
 
         # ---- 九点校准 ----
-        errors_per_point_9, mean_error_9 = run_9_point_calibration(estimator)
+        errors_per_point_9, mean_error_9 = run_9_point_calibration(estimator,camera_index = camera_num)
         error_text = f"{mean_error_9:.2f}" if mean_error_9 is not None else "未计算"
         messagebox.showinfo("九点校准完成", f"九点校准完成，平均误差: {error_text}")
 
@@ -78,6 +78,7 @@ def run_eye_tracking_workflow():
                 # 执行随机补充校准
                 errors_per_point_add, mean_error_add = run_additional_random_calibration(
                     estimator,
+                    camera_index=camera_num,
                     points_per_round=points_per_round,
                     error_threshold=error_threshold,
                     max_rounds=max_rounds
@@ -151,8 +152,6 @@ def run_eye_tracking_workflow():
 
         draw_cloud = messagebox.askyesno("预测点显示", "是否开启预测点显示功能？")
 
-        screen_width = root.winfo_screenwidth()  # 屏幕宽度
-        screen_height = root.winfo_screenheight()  # 屏幕高度
 
         eye_data = run_realtime_gaze(estimator, draw_cloud,
                                      screen_width=screen_width,

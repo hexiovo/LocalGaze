@@ -191,18 +191,32 @@ def select_model():
     root = tk.Tk()
     root.withdraw()
 
+    # 创建 Toplevel 窗口
     top = tk.Toplevel(root)
     top.title("选择模型")
-    top.geometry("250x120")
+
+    # 设置弹窗的宽度和高度
+    window_width = 250
+    window_height = 120
+
+    # 计算使弹窗居中的位置
+    position_top = int(screen_height/ 4)
+    position_left = int(screen_width/ 4)
+
+    # 设置弹窗位置和大小
+    top.geometry(f"{window_width}x{window_height}+{position_left}+{position_top}")
     top.attributes("-topmost", True)
     top.protocol("WM_DELETE_WINDOW", on_cancel)
 
+    # 添加标签
     tk.Label(top, text="请选择模型（默认为{}）:".format(ALL_MODELS[0])).pack(pady=5)
 
+    # 创建下拉框
     dropdown = ttk.Combobox(top, values=ALL_MODELS, state="readonly")
     dropdown.current(0)  # 设置默认选中第一个
     dropdown.pack(pady=5)
 
+    # 添加确认和取消按钮
     button_frame = tk.Frame(top)
     button_frame.pack(pady=10)
     tk.Button(button_frame, text="确认", width=10, command=on_confirm).pack(side="left", padx=5)
@@ -213,6 +227,7 @@ def select_model():
     chosen_model = result.get('model')
     print("选择了：", chosen_model)
     return chosen_model
+
 
 def get_model_info(excel_path: Path):
     """

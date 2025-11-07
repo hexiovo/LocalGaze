@@ -2,7 +2,7 @@ from eyetracking_pipeline import run_eye_tracking_workflow
 
 import tkinter as tk
 from tkinter import messagebox
-
+from Global_data import *
 if __name__ == "__main__":
     """
     EyeTrax 眼动追踪主程序入口
@@ -24,6 +24,7 @@ if __name__ == "__main__":
             "4. 实时眼动追踪窗口\n\n"
         )
     )
+
 
     # 调用封装好的工作流程函数
     run_eye_tracking_workflow()

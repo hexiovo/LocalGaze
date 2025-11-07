@@ -35,7 +35,15 @@ simple](https://github.com/ck-zhang/EyeTrax)
 
 [Download Success \| Anaconda](https://www.anaconda.com/download/success)
 
-0.2安装虚拟环境，点击env_requirement中的SetForLocalGaze.bat文件等待安装成功
+0.2安装虚拟环境
+
+点击env_requirement中的SetForLocalGaze.bat文件等待安装成功
+
+0.3设置参数
+
+进入global_data中，以文本形式打开，摄像头数量代表选取的摄像头，0为默认
+
+屏幕宽度和高度请改为相对应的分辨率
 
  
 
@@ -110,3 +118,11 @@ fixed bugs
 V1.5.2
 
 killing bugs
+
+ 
+
+V1.5.4
+
+修正了额外校准阶段点显示问题
+
+增加了摄像头选择功能

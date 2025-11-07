@@ -6,7 +6,7 @@ import threading
 import time
 import tkinter as tk
 
-MAX_POINTS = 50
+from Global_data import *
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.protobuf.symbol_database")
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
@@ -61,7 +61,7 @@ def run_realtime_gaze(estimator, draw_cloud=True, screen_width=1920, screen_heig
     # ---------- 摄像头预测线程 ----------
     def predict_loop():
         nonlocal running
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(camera_num)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 

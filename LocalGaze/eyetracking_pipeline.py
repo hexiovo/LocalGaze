@@ -153,9 +153,10 @@ def run_eye_tracking_workflow():
         draw_cloud = messagebox.askyesno("预测点显示", "是否开启预测点显示功能？")
 
 
-        eye_data = run_realtime_gaze(estimator, draw_cloud,
+        eye_data = run_realtime_gaze(estimator = estimator, save_name = data_name,
+                                     draw_cloud = draw_cloud,
                                      screen_width=screen_width,
-                                     screen_height=screen_height
+                                     screen_height=screen_height,
                                      )
 
         # 实验结束时间

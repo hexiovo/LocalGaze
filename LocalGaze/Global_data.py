@@ -14,7 +14,7 @@ MAX_POINTS = 50
 smooth_type = "exponential"
 # 默认方案，可选 "exponential", "weighted_average", "lowpass", "kalman",推荐exponential和kalman
 
-camera_num = 1
+camera_num = 0
 
 screen_width = 2560
 screen_height = 1440

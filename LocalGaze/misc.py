@@ -6,6 +6,9 @@ import pandas as pd
 from Global_data import *
 import sys
 import numpy as np
+import logging
+import os
+from datetime import datetime
 
 
 kalman_state = {
@@ -345,3 +348,61 @@ def smooth_points_multi(points, max_tail=10, alpha=0.2, method=None, kalman_Q=0.
     else:
         # 未知方案，直接返回最新点
         return tail_points[-1]
+
+# ---------------- 日志初始化 ----------------
+def setup_logger():
+    """
+    初始化日志记录器，返回 logger 对象及日志文件路径。
+    - 文件日志保存所有输出
+    - 控制台只显示 WARNING 及以上
+    - stdout/stderr 重定向到 logger 文件，捕获 C++ 层输出
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(base_dir, "LocalGaze_log")
+    os.makedirs(log_dir, exist_ok=True)
+
+    start_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = os.path.join(log_dir, f"{start_time}.txt")
+
+    # ---------- Logger 配置 ----------
+    logger = logging.getLogger("LocalGaze")
+    logger.setLevel(logging.DEBUG)  # 捕获所有日志
+
+    # 文件 handler 保存所有日志
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("[%(asctime)s][%(levelname)s] %(message)s",
+                                  datefmt="%Y-%m-%d %H:%M:%S")
+    file_handler.setFormatter(formatter)
+
+    # 控制台 handler 只显示 WARNING+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(formatter)
+
+    # 防止重复添加 handler
+    if not logger.hasHandlers():
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+
+    # ---------- 重定向 stdout 到 logger ----------
+    class StreamToLogger:
+        def __init__(self, logger, level=logging.INFO):
+            self.logger = logger
+            self.level = level
+        def write(self, message):
+            message = message.strip()
+            if message:
+                self.logger.log(self.level, message)
+        def flush(self):
+            pass
+
+    sys.stdout = StreamToLogger(logger, logging.INFO)
+
+    # ---------- 捕获未处理异常 ----------
+    def excepthook(type, value, tb):
+        import traceback
+        logger.error("未捕获异常:\n" + "".join(traceback.format_exception(type, value, tb)))
+    sys.excepthook = excepthook
+
+    return logger, log_file

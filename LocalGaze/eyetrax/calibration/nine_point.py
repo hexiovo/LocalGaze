@@ -137,8 +137,6 @@ def run_additional_random_calibration(
         mean_errors_per_round: list[float]，每轮平均误差
     """
     from eyetrax.calibration.adaptive import _pulse_and_capture_live
-    import cv2, time
-    import numpy as np
 
     sw, sh = get_screen_size()
     sampler = BlueNoiseSampler(sw, sh)

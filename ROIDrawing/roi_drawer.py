@@ -165,24 +165,48 @@ class ROIApp:
             return
         if not messagebox.askyesno("保存", "是否保存当前 ROI？"):
             return
+
+        # 输入 ROI 名称
         name = simpledialog.askstring("输入名称", "请输入 ROI 名称：")
         if not name:
             return
+
+        # 获取 Canvas 上形状的坐标
         x0, y0, x1, y1 = self.canvas.coords(self.current_shape_id)
-        left, right, top, bottom = min(x0,x1), max(x0,x1), min(y0,y1), max(y0,y1)
-        if self.mode=='rectangle':
-            roi = ROI(name,'rectangle',{'left':left,'right':right,'top':top,'bottom':bottom})
-        elif self.mode=='circle':
-            cx,cy=(left+right)/2,(top+bottom)/2
-            r=max((right-left)/2,(bottom-top)/2)
-            roi = ROI(name,'circle',{'cx':cx,'cy':cy,'r':r})
+        left, right = min(x0, x1), max(x0, x1)
+        top, bottom = min(y0, y1), max(y0, y1)
+        width, height = right - left, bottom - top
+        cx, cy = (left + right) / 2, (top + bottom) / 2
+
+        # 根据实际长宽判断形状类型
+        if self.mode == 'rectangle':
+            roi_type = 'rectangle'
+            roi_desc = {'left': left, 'right': right, 'top': top, 'bottom': bottom}
+        elif self.mode in ('circle', 'ellipse'):
+            # 如果宽高几乎相等，则认为是圆，否则是椭圆
+            if abs(width - height) < 1e-2:  # 允许极小误差
+                roi_type = 'circle'
+                r = width / 2
+                roi_desc = {'cx': cx, 'cy': cy, 'r': r}
+            else:
+                roi_type = 'ellipse'
+                a, b = width / 2, height / 2
+                roi_desc = {'cx': cx, 'cy': cy, 'a': a, 'b': b}
         else:
-            cx,cy=(left+right)/2,(top+bottom)/2
-            a,b=(right-left)/2,(bottom-top)/2
-            roi = ROI(name,'ellipse',{'cx':cx,'cy':cy,'a':a,'b':b})
+            # 兜底，默认用椭圆
+            roi_type = 'ellipse'
+            a, b = width / 2, height / 2
+            roi_desc = {'cx': cx, 'cy': cy, 'a': a, 'b': b}
+
+        # 创建 ROI 对象并加入列表
+        roi = ROI(name, roi_type, roi_desc)
         self.roi_list.append(roi)
-        print(f"[ROIApp] ROI {name} 已保存, 类型: {roi.shape}, 描述: {roi.description()}")
-        messagebox.showinfo("已保存", f"ROI {name} 已加入列表。")
+
+        # 打印日志并提示用户
+        print(f"[ROIApp] ROI {name} 已保存, 类型: {roi_type}, 描述: {roi.description()}")
+        messagebox.showinfo("已保存", f"ROI {name} 已加入列表。\n类型: {roi_type}")
+
+        # 返回 Overlay 界面
         self.back_from_overlay()
 
     def save_all_prompt(self):

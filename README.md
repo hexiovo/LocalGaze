@@ -1,7 +1,7 @@
 Introduction
 ============
 
-本项目是和Hexi用于实现个人眼动追踪程序的包，如有问题请见谅
+本项目是Hexi用于实现个人眼动追踪程序的包，如有问题请见谅
 
 email:py_edu_mail\@163.com
 
@@ -11,6 +11,8 @@ Thanks
 使用本包如遇问题请与我本人联系，如果有科研合作也请联络本人
 
 我需要相关参数（所存储的model_info.xlsx文件），请好心人上传给我，以供我后续调节
+
+如果有相关BUG请上传对应的Log
 
 Statement
 =========
@@ -38,6 +40,11 @@ Misc:
 -----
 
 眼动ROI绘制：ROIDrwaing
+
+DadaAnalysis
+------------
+
+眼动数据处理：EyeEvaluate
 
  
 
@@ -122,6 +129,17 @@ ROIDrawing
 
 ROIDrawing\\ROIdata下
 
+EyeEvaluate
+===========
+
+0.环境配置
+
+0.1.下载conda(miniconda也可)官网
+
+[Download Success \| Anaconda]
+
+0.2.安装虚拟环境
+
  
 
 Log
@@ -184,3 +202,29 @@ V1.7.0
 V1.7.2
 
 修正BUG，增加了ROIDrawing的日志功能
+
+V1.7.3
+
+修正BUG，使得结果正确
+
+V1.8.0
+
+眼动数据处理程序EyeEvaluate正在processing
+
+V1.8.1
+
+增加了更完善的日志功能并封装
+
+V1.8.2
+
+添加了更严密的弹窗个性化，增加了文件与文件夹选择功能
+
+V1.8.3
+
+完成了ROI提取函数
+
+增加了针对列的ROI识别功能
+
+V1.8.4
+
+修正了流程，增添了log的important功能

@@ -34,4 +34,3 @@ init_logger_and_redirect(message="程序启动"):
         logger：logging.Logger 对象
 ------------------------------------------------------------
 """
-

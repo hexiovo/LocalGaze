@@ -1,10 +1,9 @@
 import os
+import sys
+from GlobalData import *
+
 import logging
 import datetime
-import sys
-
-
-from GlobalData import *
 
 
 class StreamToLogger:
@@ -34,7 +33,7 @@ def get_log_file(base_dir):
     """
     根据时间戳生成日志文件，如果已存在且超过大小限制，则增加序号
     """
-    log_dir = os.path.join(base_dir, "EyeEvaluate_log")
+    log_dir = os.path.join(os.path.dirname(base_dir), "EyeEvaluate_log")
     os.makedirs(log_dir, exist_ok=True)
 
     start_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

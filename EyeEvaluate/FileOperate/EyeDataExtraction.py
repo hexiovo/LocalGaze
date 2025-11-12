@@ -2,23 +2,23 @@ from Popup.tkClass import *
 from GlobalData import *
 from .xlsx_validation import *
 
-
 import pandas as pd
 
-
-def ROIchoose(logger):
+def EyeDatachoose(logger):
     while True:
-        result_filedialog, path = custom_file_dialog(title="请选择ROI兴趣区所在的文件(.xlsx文件)", logger=logger)
+        result_filedialog, path = custom_file_dialog(title="请选择EyeData所在的文件(.xlsx文件)或包含对应文件的文件夹",
+                                                     logger=logger)
         if result_filedialog == 1 and path != "":
             try:
-                ROI_data = extract_ROI(path)
-                break
+                if EyeData_Validation(path):
+                    EyeData_Type = 1
+                    break
             except Exception as e:
                 print(e)
-                logger.info("ROI输入有误，输入为错误文件")
+                logger.info("眼动数据输入有误，输入为错误文件")
                 custom_messagebox(
                     title="提示",
-                    message="所选择文件不符合要求ROI文件要求",
+                    message="所选择文件不符合要求眼动数据文件要求",
                     autowh=False,
                     width=330,
                     height=160)
@@ -37,23 +37,23 @@ def ROIchoose(logger):
             logger.info("未知错误")
             break
 
-    return ROI_data
+    return EyeData_Type
 
 
-def extract_ROI(file_path):
+def EyeData_Validation(file_path):
     """
-    读取 ROI Excel 文件，只提取名称和描述列。
+        读取 Excel 文件，只提取名称和描述列。
 
-    参数:
-        file_path (str): Excel 文件路径
+        参数:
+            file_path (str): Excel 文件路径
 
-    返回:
-        List[Dict]: 每个 ROI 的字典列表，每个字典包含 'name' 和 'description'
+        返回:
+            逻辑值，True表示符合要求，False表示不符合要求
 
-    异常处理:
-        - 如果不是 .xlsx 文件，抛出 ValueError
-        - 如果列名不符合 ['命名','形状','描述']，抛出 ValueError
-    """
+        异常处理:
+            - 如果不是 .xlsx 文件，抛出 ValueError
+            - 如果不符合 要求 ，抛出 ValueError
+        """
     # 1. 检查文件扩展名
     if not file_path.lower().endswith(".xlsx"):
         raise ValueError(f"文件必须是 .xlsx 格式: {file_path}")
@@ -64,22 +64,19 @@ def extract_ROI(file_path):
     except Exception as e:
         raise ValueError(f"读取 Excel 文件失败: {e}")
 
-    # 3. 构建规则：第1个sheet必须exact匹配 ['命名','形状','描述']
-    rule = check_columns(sheet_index=1, expected_cols=['命名', '形状', '描述'], mode="exact")
+    EyeData_rule = EyeDataRule()
+
+    # 3. 构建规则：第1个sheet必须exact匹配
+    rule = check_columns(
+        sheet_index=EyeData_rule.sheet_index,
+        expected_cols=EyeData_rule.expected_cols,
+        mode=EyeData_rule.mode)
 
     # 4. 检查规则
     if not rule(df_dict):
         first_sheet_name = list(df_dict.keys())[0]
         actual_cols = list(df_dict[first_sheet_name].columns)
-        raise ValueError(f"Excel 列名不符合要求，应为 ['命名','形状','描述']，当前列为 {actual_cols}")
+        raise ValueError(f"Excel 列名不符合要求，应为 {EyeData_rule.expected_cols}，当前列为 {actual_cols}")
 
-    # 5. 提取数据
-    df = list(df_dict.values())[0]  # 第1个sheet
-    roi_list = []
-    for _, row in df.iterrows():
-        roi_list.append({
-            "name": str(row['命名']).strip(),
-            "description": str(row['描述']).strip()
-        })
 
-    return roi_list
+    return True

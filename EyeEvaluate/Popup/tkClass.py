@@ -1,12 +1,11 @@
+from GlobalData import *
+from .askopenpathname import askopenpathname
+from .misc_utils import *
+
+
 import tkinter as tk
 from tkinter import font as tkfont
-from .askopenpathname import askopenpathname
-from GlobalData import *
-
-
-
 import os
-from .misc_utils import *
 
 
 def custom_messagebox(title, message, font_size=12, autowh = True, width=420, height=280,font_name="微软雅黑",):
@@ -145,6 +144,9 @@ def custom_file_dialog(title="选择文件/文件夹",  font_size=12, font_name=
     text_font = tkfont.Font(family=font_name, size=font_size)
     btn_font = tkfont.Font(family=font_name, size=font_size)
 
+    title_lines = (len(title) + 19) // 20
+
+    height = height + (title_lines - 1 ) * 30
     # 居中显示（保留你原来的分母 4，如果想居中于屏幕请改为 //2）
     win.update_idletasks()
     x = (SCREEN_WIDTH - width) // 4
@@ -156,7 +158,7 @@ def custom_file_dialog(title="选择文件/文件夹",  font_size=12, font_name=
     title_font = tkfont.Font(family=font_name, size=font_size + 2, weight="bold")
     title_label = tk.Label(
         win,
-        text=title,
+        text=wrap_title(title),
         font=title_font,
         bg="white",
         fg="black",

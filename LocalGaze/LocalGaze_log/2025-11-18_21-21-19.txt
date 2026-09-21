@@ -1,0 +1,22 @@
+[2025-11-18 21:21:19][INFO] 程序启动：EyeTrax 实时眼动追踪系统
+[2025-11-18 21:21:19][INFO] Tkinter 根窗口初始化完成，弹窗即将显示
+[2025-11-18 21:21:23][INFO] 系统说明弹窗已显示，用户已确认
+[2025-11-18 21:21:28][INFO] 选择了：
+[2025-11-18 21:21:28][INFO] ridge
+[2025-11-18 21:21:28][INFO] {'alpha': 1.0}
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+W0000 00:00:1763472088.377942   14676 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1763472088.398431   14676 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+11934904), np.float64(30.104244192398923), np.float64(32.358263896124114), np.float64(28.378411814236145), np.float64(31.576663042087013), np.float64(26.045964476003697), np.float64(33.25810568013998), np.float64(34.53062910846424), np.float64(35.09320048927986)]
+[2025-11-18 21:22:01][INFO] Mean calibration error: 30.63 pixels
+[2025-11-18 21:22:08][INFO] ✅ 校准结果已保存至：Model_history\TEST.xlsx
+[2025-11-18 21:22:12][INFO] 开始时间为:
+[2025-11-18 21:22:12][INFO] 2025-11-18 21:22:12
+[2025-11-18 21:22:34][INFO] 结束时间为:
+[2025-11-18 21:22:34][INFO] 2025-11-18 21:22:34
+[2025-11-18 21:22:36][INFO] 摄像头理论帧率: 30.0 fps
+[2025-11-18 21:22:36][INFO] 实验数据已保存到: F:\桌面\程序\LocalGaze\Data\test.xlsx
+[2025-11-18 21:22:36][INFO] 程序结束

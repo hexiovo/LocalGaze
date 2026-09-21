@@ -1,0 +1,1 @@
+from GlobalData import *

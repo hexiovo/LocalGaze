@@ -6,24 +6,24 @@ from .xlsx_validation import *
 import pandas as pd
 
 
-def ROIchoose(logger):
+def Infochoose(logger):
     while True:
-        result_filedialog, path = custom_file_dialog(title="请选择ROI兴趣区所在的文件(.xlsx文件)", logger=logger)
+        result_filedialog, path = custom_file_dialog(title="请选择实验Info文件(.xlsx文件)", logger=logger)
         if result_filedialog == 1 and path != "":
             try:
-                ROI_data = extract_ROI(path)
+                info_Data = extract_Info(path)
                 break
             except Exception as e:
                 print(e)
-                logger.info("ROI输入有误，输入为错误文件")
+                logger.info("Info输入有误，输入为错误文件")
                 custom_messagebox(
                     title="提示",
-                    message="所选择文件不符合要求ROI文件要求",
+                    message="所选择文件不符合要求Info文件要求",
                     autowh=False,
                     width=330,
                     height=160)
         elif result_filedialog == 2 and path != "":
-            logger.info("ROI输入有误，输入为文件夹")
+            logger.info("Info输入有误，输入为文件夹")
             custom_messagebox(
                 title="提示",
                 message="所选择为文件夹",
@@ -32,29 +32,29 @@ def ROIchoose(logger):
                 height=160)
         elif result_filedialog == 0 or path == "":
             logger.info("用户取消输入")
-            ROI_data = []
+            info_Data = []
             break
         else:
             logger.info("未知错误")
-            ROI_data = []
+            info_Data = []
             break
 
-    return ROI_data
+    return info_Data
 
 
-def extract_ROI(file_path):
+def extract_Info(file_path):
     """
-    读取 ROI Excel 文件，只提取名称和描述列。
+    读取 Info Excel 文件，只提取名称和描述列。
 
     参数:
         file_path (str): Excel 文件路径
 
     返回:
-        List[Dict]: 每个 ROI 的字典列表，每个字典包含 'name' 和 'description'
+        Info信息
 
     异常处理:
         - 如果不是 .xlsx 文件，抛出 ValueError
-        - 如果列名不符合 ['命名','形状','描述']，抛出 ValueError
+        - 如果列名不符合 规则，抛出 ValueError
     """
     # 1. 检查文件扩展名
     if not file_path.lower().endswith(".xlsx"):
@@ -66,22 +66,24 @@ def extract_ROI(file_path):
     except Exception as e:
         raise ValueError(f"读取 Excel 文件失败: {e}")
 
-    # 3. 构建规则：第1个sheet必须exact匹配 ['命名','形状','描述']
-    rule = check_columns(sheet_index=1, expected_cols=['命名', '形状', '描述'], mode="exact")
+    inforule = InfoRule()
+
+    # 3. 构建规则：第1个sheet必须匹配
+    rule = check_columns(
+        sheet_index=inforule.sheet_index,
+        expected_cols=inforule.expected_cols,
+        mode=inforule.mode
+    )
 
     # 4. 检查规则
     if not rule(df_dict):
         first_sheet_name = list(df_dict.keys())[0]
         actual_cols = list(df_dict[first_sheet_name].columns)
-        raise ValueError(f"Excel 列名不符合要求，应为 ['命名','形状','描述']，当前列为 {actual_cols}")
+        raise ValueError(
+            f"Excel 列名不符合要求，应为 {inforule.expected_cols}，当前列为 {actual_cols}"
+        )
 
-    # 5. 提取数据
-    df = list(df_dict.values())[0]  # 第1个sheet
-    roi_list = []
-    for _, row in df.iterrows():
-        roi_list.append({
-            "name": str(row['命名']).strip(),
-            "description": str(row['描述']).strip()
-        })
-
-    return roi_list
+    # 5. 返回 DataFrame（规则指定的 sheet）
+    target_sheet_name = list(df_dict.keys())[inforule.sheet_index]
+    
+    return df_dict[target_sheet_name]

@@ -192,6 +192,13 @@ def run_eye_tracking_workflow():
         if 'all_errors_per_point_add' not in locals():
             all_errors_per_point_add = []
 
+        cap = cv2.VideoCapture(camera_num)
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        print(f"摄像头理论帧率: {fps} fps")
+
+        cap.release()  # ✅ 释放摄像头资源
+
         # 实验信息表
         experiment_info = {
             "使用已有模型": [use_existing],
@@ -202,7 +209,8 @@ def run_eye_tracking_workflow():
             "结束时间": [end_time_str],
             "最终平均误差": [final_mean_error],
             "计算模型":[model_type],
-            "计算模型参数":[model_kwargs]
+            "计算模型参数":[model_kwargs],
+            "摄像头理论帧率":[fps]
         }
         df_info = pd.DataFrame(experiment_info)
 

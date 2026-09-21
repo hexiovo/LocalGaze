@@ -41,10 +41,12 @@ Misc:
 
 眼动ROI绘制：ROIDrwaing
 
-DadaAnalysis
+DataAnalysis
 ------------
 
 眼动数据处理：EyeEvaluate
+
+眼动数据预处理：pre
 
  
 
@@ -142,6 +144,56 @@ EyeEvaluate
 
  
 
+Preprocessing
+-------------
+
+0.环境配置
+
+预处理模块使用LocalGaze现有Python环境，不需要单独安装环境。支持xlsx、xlsm、csv、tsv和txt数据。
+
+1.准备文件
+
+模型文件放在Model_history中，数据文件放在Data中。模型与数据必须使用一一对应的名称，例如：
+
+Model_history\A10-AUT.xlsx
+
+Data\A10-AUT.xlsx
+
+程序按去掉扩展名后的完整名称匹配，忽略大小写。名称缺失或重复时不会猜测匹配，具体原因会写入批次报告。
+
+2.使用
+
+在LocalGaze项目根目录打开PowerShell，执行：
+
+```powershell
+python .\pre\run_preprocessing.py `
+  --model ".\LocalGaze\Model_history" `
+  --data ".\LocalGaze\Data"
+```
+
+也可以直接处理一对同名文件：
+
+```powershell
+python .\pre\run_preprocessing.py `
+  --model ".\LocalGaze\Model_history\A10-AUT.xlsx" `
+  --data ".\LocalGaze\Data\A10-AUT.xlsx" `
+  --output ".\LocalGaze\Data_preprocessed"
+```
+
+默认屏幕范围为2560×1440。如果采集屏幕不同，请增加`--width`和`--height`参数。纯数值时间默认按秒处理，可用`--time-unit milliseconds`或`--time-unit microseconds`修改。
+
+3.数据存储
+
+未指定output时，结果默认保存在数据目录旁的Data_preprocessed中，原始文件不会被覆盖。
+
+Excel保留原工作表和原始列，在眼动数据表右侧追加Pre字段，并增加Pre_QC、Pre_Windows、Pre_BadSegments和Pre_SuspectSegments工作表。
+
+csv、tsv和txt保持原扩展名与分隔符，并额外生成qc.json。每批处理都会生成preprocess_report.csv和preprocess_manifest.json。
+
+4.备注
+
+更完整的输入规则、处理方法和验证结果见pre目录中的README.md和《眼动数据预处理独立模块方案.docx》。
+
 Log
 ===
 
@@ -232,3 +284,13 @@ V1.8.4
 V1.8.4.5
 
 调整了调用，增加了新的眼动提取模块
+
+V2.0.0
+
+将眼动数据预处理整理为pre独立模块。
+
+增加模型位置与数据位置的同名一一匹配，支持单文件和目录批处理。
+
+保持原始文件格式输出，并增加预处理字段、质量控制工作表和批次报告。
+
+增加预处理使用说明、方案文档、合成测试和真实Excel文件验证。

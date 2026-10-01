@@ -11,7 +11,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from pre import PreprocessConfig, preprocess_frame, preprocess_paths
+from pre import PreprocessConfig, preprocess_analysis_paths, preprocess_frame, preprocess_paths
 
 
 class PreprocessingTests(unittest.TestCase):
@@ -71,6 +71,40 @@ class PreprocessingTests(unittest.TestCase):
             self.assertIn("Pre_X", output.columns)
             qc = json.loads((out_dir / "S01.tsv.qc.json").read_text(encoding="utf-8"))
             self.assertEqual(qc["calibration_error_pixels"], 15.0)
+
+    def test_analysis_preset_disables_calibration_distance_interpolation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model_dir, data_dir = root / "models", root / "data"
+            model_dir.mkdir()
+            data_dir.mkdir()
+            with pd.ExcelWriter(model_dir / "S02.xlsx") as writer:
+                pd.DataFrame({"Error": [100.0]}).to_excel(writer, sheet_name="NinePointCalibration", index=False)
+            x = np.arange(20, dtype=float) * 10.0 + 100.0
+            x[8] = np.nan
+            pd.DataFrame({
+                "Timestamp": pd.date_range("2026-01-01", periods=20, freq="40ms").astype(str),
+                "X": x,
+                "Y": np.arange(20, dtype=float) * 10.0 + 200.0,
+            }).to_csv(data_dir / "S02.tsv", sep="\t", index=False)
+            config = PreprocessConfig(
+                coordinate_bounds=None,
+                max_interpolation_distance=1.0,
+                max_interpolation_gap_s=0.2,
+            )
+
+            legacy_report = preprocess_paths(model_dir, data_dir, root / "legacy", config=config)
+            analysis_report = preprocess_analysis_paths(model_dir, data_dir, root / "analysis", config=config)
+
+            self.assertEqual(legacy_report.loc[0, "status"], "processed")
+            self.assertEqual(analysis_report.loc[0, "status"], "processed")
+            legacy = pd.read_csv(root / "legacy" / "S02.tsv", sep="\t")
+            analysis = pd.read_csv(root / "analysis" / "S02.tsv", sep="\t")
+            self.assertGreater(int(legacy["Pre_InterpolatedMask"].sum()), 0)
+            self.assertEqual(int(analysis["Pre_InterpolatedMask"].sum()), 0)
+            qc = json.loads((root / "analysis" / "S02.tsv.qc.json").read_text(encoding="utf-8"))
+            self.assertEqual(qc["preprocessing_preset"], "analysis")
+            self.assertEqual(qc["coordinate_interpolation"], "disabled_analysis_preset")
 
 
 if __name__ == "__main__":

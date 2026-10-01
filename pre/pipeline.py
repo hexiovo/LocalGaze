@@ -6,7 +6,7 @@ import copy
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -27,13 +27,27 @@ def preprocess_paths(
     output_path: str | Path | None = None,
     *,
     config: PreprocessConfig | None = None,
+    preset: Literal["legacy", "analysis"] = "legacy",
 ) -> pd.DataFrame:
-    """Match same-named model/data files and preprocess every unambiguous pair."""
+    """Match same-named model/data files and preprocess every unambiguous pair.
+
+    The default ``legacy`` preset preserves calibration-distance interpolation.
+    The explicit ``analysis`` preset records measured masks while forcibly
+    disabling coordinate interpolation, regardless of the supplied config.
+    """
+
+    if preset not in {"legacy", "analysis"}:
+        raise ValueError("preset must be 'legacy' or 'analysis'")
 
     model_root = Path(model_path).expanduser().resolve()
     data_root = Path(data_path).expanduser().resolve()
     output_root = _default_output(data_root) if output_path is None else Path(output_path).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    if preset == "analysis":
+        reserved = [output_root / "preprocess_report.csv", output_root / "preprocess_manifest.json"]
+        existing = [path for path in reserved if path.exists()]
+        if existing:
+            raise FileExistsError(f"Analysis output already contains a report or manifest: {existing}")
 
     model_files = discover_files(model_root, MODEL_SUFFIXES)
     data_files = discover_files(data_root, DATA_SUFFIXES)
@@ -73,7 +87,10 @@ def preprocess_paths(
             gaze, metadata = read_gaze(source)
             error_pixels, calibration_status, calibration_workbook = read_calibration_error(model)
             local_config = copy.deepcopy(config or PreprocessConfig())
-            local_config.max_interpolation_distance = error_pixels
+            if preset == "analysis":
+                local_config.max_interpolation_distance = None
+            else:
+                local_config.max_interpolation_distance = error_pixels
             columns = metadata["columns"]
             result = preprocess_frame(
                 gaze,
@@ -90,6 +107,10 @@ def preprocess_paths(
             result.qc["calibration_workbook"] = str(calibration_workbook) if calibration_workbook else ""
             result.qc["calibration_status"] = calibration_status
             result.qc["calibration_error_pixels"] = error_pixels
+            result.qc["preprocessing_preset"] = preset
+            result.qc["calibration_distance_used_for_interpolation"] = preset == "legacy" and error_pixels is not None
+            if preset == "analysis":
+                result.qc["coordinate_interpolation"] = "disabled_analysis_preset"
             write_result(
                 source, destination, result.data, metadata, result.qc,
                 result.windows, result.bad_segments, result.suspect_segments,
@@ -109,15 +130,32 @@ def preprocess_paths(
 
     report = pd.DataFrame(rows)
     report.to_csv(output_root / "preprocess_report.csv", index=False, encoding="utf-8-sig")
+    manifest_config = asdict(config or PreprocessConfig())
+    if preset == "analysis":
+        manifest_config["max_interpolation_distance"] = None
     manifest = {
         "model_path": str(model_root), "data_path": str(data_root),
-        "output_path": str(output_root), "config": asdict(config or PreprocessConfig()),
+        "output_path": str(output_root), "config": manifest_config,
+        "preset": preset,
+        "coordinate_interpolation": "disabled" if preset == "analysis" else "calibration_error_distance_when_available",
         "matching_rule": "case-insensitive exact filename stem",
     }
     (output_root / "preprocess_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return report
+
+
+def preprocess_analysis_paths(
+    model_path: str | Path,
+    data_path: str | Path,
+    output_path: str | Path | None = None,
+    *,
+    config: PreprocessConfig | None = None,
+) -> pd.DataFrame:
+    """Run the compatibility preprocessor with its non-interpolating preset."""
+
+    return preprocess_paths(model_path, data_path, output_path, config=config, preset="analysis")
 
 
 def _index_models(files: list[Path]) -> dict[str, Path]:

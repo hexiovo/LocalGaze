@@ -1,0 +1,16 @@
+LocalGaze Windows 便携版
+
+1. 解压整个文件夹到有写权限的位置。双击 LocalGaze.exe 打开统一工作台。
+2. ROIDrawing.exe 是新版独立 ROI 入口；也可在工作台的 ROI 页启动。
+3. LocalGazeWorker.exe 是任务辅助程序，不需要手动打开。
+4. 请保留所有 EXE 与 _internal 文件夹，不要只复制一个 EXE。
+5. 输出目录可自选。不要把模型或原始数据放进 _internal。
+6. 点击窗口顶部“查看整体指南”按钮即可在程序内阅读完整流程，任务运行时也可使用；“使用指南”页提供“打开 TXT”，指南也随包附带。
+7. 中文安装路径下，相机后端会把自带的 MediaPipe 图/模型资源临时复制到系统临时目录，不复制用户数据。若系统临时目录含中文且无法写入 Windows 临时目录，可设置 LOCALGAZE_RESOURCE_CACHE 为有写权限的英文路径。
+
+本包带 Python 和功能依赖，无需另装 Python。未包含用户数据或已校准模型。
+旧模型能否使用取决于记录的特征契约；建议按当前座位、光线和摄像头重新校准。
+检查覆盖当前 Windows 的隐藏窗口、模型、FaceMesh 资源和合成数据工作流。
+尚未验证真实摄像头、独立眼动精度、可见窗口/DPI 或全新电脑。
+
+源码构建：使用 `build_tools/windows/build.ps1`，必须通过 `-PythonExe` 指定包含项目依赖和 PyInstaller 的 Python。默认外部构建目录是 `E:\CodexData\localgaze-builds\20261001-v2`，默认发布目录为 `release\LocalGaze-20261001-v2`。这两个参数都可显式覆盖；如果构建目录、发布目录或 ZIP 已存在，脚本会同步选择下一个未占用的 `-r1`、`-r2` 等名称，不覆盖或删除既有结果。检查报告、日志和外置 delivery manifest 保留在构建目录中。

@@ -2,16 +2,25 @@ from __future__ import annotations
 
 import random
 import time
+import uuid
 from typing import List, Tuple
 
 import cv2
 import numpy as np
 
+from eyetrax.calibration.common import (
+    CALIBRATION_SETTLE_NS,
+    MIN_OPEN_EYE_FRAMES,
+    MIN_OPEN_EYE_SPAN_NS,
+    _coverage_complete,
+    _frame_id,
+)
 from eyetrax.calibration.nine_point import run_9_point_calibration
 from eyetrax.gaze import GazeEstimator
 from eyetrax.utils.draw import draw_cursor
 from eyetrax.utils.screen import get_screen_size
 from eyetrax.calibration.misc import draw_gaze_cloud
+
 
 class BlueNoiseSampler:
     def __init__(self, w: int, h: int, margin: float = 0.08):
@@ -34,124 +43,20 @@ class BlueNoiseSampler:
         return pts
 
 
-def _draw_live_pred(canvas, frame, gaze_estimator):
-    ft, blink = gaze_estimator.extract_features(frame)
-    if ft is None or blink:
-        return None
-    x_pred, y_pred = gaze_estimator.predict(np.array([ft]))[0]
-    draw_cursor(canvas, int(x_pred), int(y_pred), alpha=1.0)
-    return ft
-
-
 def _pulse_and_capture_live(
-        gaze_estimator,
-        cap: cv2.VideoCapture,
-        pts: list[tuple[int, int]],
-        sw: int,
-        sh: int,
-        show_real_time: bool = True
+    gaze_estimator, cap, pts, sw, sh, show_real_time=True,
+    *, visit_id=None, return_metadata=False,
 ):
-    """
-    进行脉冲校准和特征捕获，同时实时显示被试眼睛注视位置的概率云（浅灰色）。
-    窗口层级结构：
-        - 黑屏校准背景（最下层）
-        - 左上角嵌入摄像头实时画面（中层）
-        - 校准点和动画（最上层）
-    """
-    import cv2
-    import numpy as np
-    import time
-
-    feats, targs = [], []
-
-    try:
-        # ---- 创建全屏黑屏窗口 ----
-        window_name = "Adaptive Calibration"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
-        for x, y in pts:
-            # ---------------- 脉冲阶段 ----------------
-            pulse_start = time.time()
-            while time.time() - pulse_start < 1.0:
-                ok, frame = cap.read()
-                if not ok:
-                    continue
-
-                # 黑屏画布（最底层）
-                canvas = np.zeros((sh, sw, 3), np.uint8)
-
-                # 左上角嵌入摄像头画面（中层）
-                if frame is not None:
-                    h, w, _ = frame.shape
-                    frame_small = cv2.resize(frame, (360, 270))
-                    canvas[10:10 + 270, 10:10 + 360] = frame_small
-
-                # 实时显示预测概率云（中上层）
-                ft, blink = gaze_estimator.extract_features(frame)
-                if ft is not None and not blink and show_real_time:
-                    x_pred, y_pred = gaze_estimator.predict([ft])[0]
-                    draw_gaze_cloud(canvas, x_pred, y_pred, radius=30, alpha=0.4)
-
-                # 脉冲圆动画（最上层）
-                rad = 15 + int(15 * abs(np.sin((time.time() - pulse_start) * 6)))
-                cv2.circle(canvas, (x, y), rad, (0, 255, 0), -1)
-
-                # 显示整合画面
-                cv2.imshow(window_name, canvas)
-
-                if cv2.waitKey(1) == 27:  # ESC键退出
-                    cap.release()
-                    cv2.destroyAllWindows()
-                    return None, None
-
-            # ---------------- 捕获阶段 ----------------
-            cap_start = time.time()
-            while time.time() - cap_start < 1.0:
-                ok, frame = cap.read()
-                if not ok:
-                    continue
-
-                # 黑屏画布（最底层）
-                canvas = np.zeros((sh, sw, 3), np.uint8)
-
-                # 左上角嵌入摄像头画面（中层）
-                if frame is not None:
-                    h, w, _ = frame.shape
-                    frame_small = cv2.resize(frame, (360, 270))  # ⬅ 放大一倍
-                    canvas[10:10 + 270, 10:10 + 360] = frame_small
-
-                # 实时显示预测概率云（中上层）
-                ft, blink = gaze_estimator.extract_features(frame)
-                if ft is not None and not blink and show_real_time:
-                    x_pred, y_pred = gaze_estimator.predict([ft])[0]
-                    draw_gaze_cloud(canvas, x_pred, y_pred, radius=30, alpha=0.4)
-                    feats.append(ft)
-                    targs.append([x, y])
-
-                # 捕获阶段动画（最上层）
-                t = (time.time() - cap_start) / 1.0
-                ang = 360 * (1 - (t * t * (3 - 2 * t)))
-                cv2.circle(canvas, (x, y), 20, (0, 255, 0), -1)
-                cv2.ellipse(canvas, (x, y), (40, 40), 0, -90, -90 + ang, (255, 255, 255), 4)
-
-                # 显示整合画面
-                cv2.imshow(window_name, canvas)
-
-                if cv2.waitKey(1) == 27:
-                    cap.release()
-                    cv2.destroyAllWindows()
-                    return None, None
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise
-
-    cap.release()
-    cv2.destroyAllWindows()
-    return feats, targs
-
+    """Use the shared receipt/settling/coverage rules for additional targets."""
+    from eyetrax.calibration.common import _pulse_and_capture
+    window_name = "Adaptive Calibration"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    return _pulse_and_capture(
+        gaze_estimator, cap, pts, sw, sh, visit_id=visit_id,
+        return_metadata=return_metadata, window_name=window_name,
+        show_real_time=show_real_time, show_camera=True,
+    )
 
 
 def run_adaptive_calibration(
@@ -162,29 +67,61 @@ def run_adaptive_calibration(
     show_predictions: bool = True,
     camera_index: int = 0,
 ) -> None:
-    run_9_point_calibration(gaze_estimator, camera_index=camera_index)
-
+    summary, _ = run_9_point_calibration(gaze_estimator, camera_index=camera_index)
+    if summary is None:
+        return
     sw, sh = get_screen_size()
+    if hasattr(gaze_estimator, "set_screen_info"):
+        gaze_estimator.set_screen_info(sw, sh)
     sampler = BlueNoiseSampler(sw, sh)
+    if retrain_every <= 0:
+        raise ValueError("retrain_every must be positive")
     points = sampler.sample(num_random_points)
-
     cap = cv2.VideoCapture(camera_index)
-    cv2.namedWindow("Adaptive Calibration", cv2.WND_PROP_FULLSCREEN)
-    cv2.setWindowProperty(
-        "Adaptive Calibration", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
-    )
+    if not cap.isOpened():
+        cap.release()
+        return
 
-    all_feats, all_targs = [], []
+    all_feats: list[np.ndarray] = []
+    all_targs: list[list[float]] = []
+    all_samples: list[dict] = []
+    visit_id = uuid.uuid4().hex
+    try:
+        for chunk_start in range(0, len(points), retrain_every):
+            chunk = points[chunk_start:chunk_start + retrain_every]
+            result = _pulse_and_capture_live(
+                gaze_estimator,
+                cap,
+                chunk,
+                sw,
+                sh,
+                show_real_time=show_predictions,
+                visit_id=visit_id,
+                return_metadata=True,
+            )
+            if not result:
+                break
+            features, targets, capture_metadata = result
+            if not features or not all(item["accepted"] for item in capture_metadata["target_statuses"]):
+                continue
+            all_feats.extend(features)
+            all_targs.extend(targets)
+            all_samples.extend(capture_metadata["samples"])
+            gaze_estimator.train(
+                np.asarray(all_feats),
+                np.asarray(all_targs),
+                target_ids=[tuple(sample["target_id"]) for sample in all_samples],
+                visit_ids=[sample["visit_id"] for sample in all_samples],
+                frame_ids=[sample["frame_id"] for sample in all_samples],
+                use_group_weights=getattr(gaze_estimator, "calibration_use_group_weights", True),
+            )
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
 
-    for chunk_start in range(0, len(points), retrain_every):
-        chunk = points[chunk_start : chunk_start + retrain_every]
-        feats, targs = _pulse_and_capture_live(gaze_estimator, cap, chunk, sw, sh)
-        if feats is None:
-            break
-        all_feats.extend(feats)
-        all_targs.extend(targs)
 
-        gaze_estimator.train(np.asarray(all_feats), np.asarray(all_targs))
-
-    cap.release()
-    cv2.destroyWindow("Adaptive Calibration")
+__all__ = [
+    "BlueNoiseSampler",
+    "_pulse_and_capture_live",
+    "run_adaptive_calibration",
+]

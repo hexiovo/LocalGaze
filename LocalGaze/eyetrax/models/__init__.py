@@ -16,7 +16,12 @@ def register_model(name: str, cls: Type[BaseModel]) -> None:
 
 
 def _auto_discover() -> None:
+    # Built-ins live in the PYZ archive in an EXE, without sibling .py files.
+    for module in ("ridge", "elastic_net", "svr", "tiny_mlp"):
+        import_module(f"{__name__}.{module}")
     pkg_dir = Path(__file__).resolve().parent
+    if not pkg_dir.is_dir():
+        return
     for f in pkg_dir.iterdir():
         if f.name in {"__init__.py", "base.py"} or f.suffix != ".py":
             continue

@@ -22,6 +22,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--time-unit", choices=["seconds", "milliseconds", "microseconds"],
         default="seconds", help="仅用于纯数值时间列，默认 seconds",
     )
+    parser.add_argument(
+        "--preset", choices=["legacy", "analysis"], default="legacy",
+        help="analysis 强制关闭 gaze XY 插值；默认 legacy 保留旧校准误差插值行为",
+    )
     return parser
 
 
@@ -31,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         time_unit=args.time_unit,
         coordinate_bounds=(0.0, float(args.width - 1), 0.0, float(args.height - 1)),
     )
-    report = preprocess_paths(args.model, args.data, args.output, config=config)
+    report = preprocess_paths(args.model, args.data, args.output, config=config, preset=args.preset)
     failed = int((report["status"] == "failed").sum()) if not report.empty else 0
     unmatched = int(report["status"].isin(["data_without_model", "model_without_data"]).sum()) if not report.empty else 0
     processed = int((report["status"] == "processed").sum()) if not report.empty else 0

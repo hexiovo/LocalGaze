@@ -27,6 +27,16 @@ jobs:
       - name: Build and verify portable package
         run: .\build_tools\windows\build.ps1 -PythonExe .\.venv\Scripts\python.exe
         shell: pwsh
+      - name: Show build diagnostics on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path build-artifacts/windows-* -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem -LiteralPath $_.FullName -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.log', '.json' } | ForEach-Object {
+              Write-Output $_.Name
+              Get-Content -LiteralPath $_.FullName -Tail 100
+            }
+          }
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

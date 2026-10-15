@@ -1,14 +1,14 @@
 ﻿param(
     [string]$PythonExe = '',
     [string]$ArtifactsRoot = '',
-    [string]$ReleaseName = 'LocalGaze-2026.10.15.0',
+    [string]$ReleaseName = 'LocalGaze-2026.10.16.0',
     [string]$DeliveryRoot = '',
     [switch]$SkipArchive
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 if ([string]::IsNullOrWhiteSpace($ArtifactsRoot)) {
-    $ArtifactsRoot = Join-Path $projectRoot 'build-artifacts\windows-2026.10.15.0'
+    $ArtifactsRoot = Join-Path $projectRoot 'build-artifacts\windows-2026.10.16.0'
 }
 if ([string]::IsNullOrWhiteSpace($PythonExe)) {
     $PythonExe = Join-Path $projectRoot '.venv\Scripts\python.exe'

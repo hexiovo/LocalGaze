@@ -9,8 +9,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("LocalGaze Eye Tracking Workbench")]
 [assembly: AssemblyCompany("LocalGaze")]
 [assembly: AssemblyProduct("LocalGaze")]
-[assembly: AssemblyVersion("2026.10.15.0")]
-[assembly: AssemblyFileVersion("2026.10.15.0")]
+[assembly: AssemblyVersion("2026.10.16.0")]
+[assembly: AssemblyFileVersion("2026.10.16.0")]
 
 internal static class PortableLauncher
 {

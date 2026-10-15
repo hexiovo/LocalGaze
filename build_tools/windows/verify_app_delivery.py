@@ -70,7 +70,7 @@ def entry_info(path, expected_icons, subsystem):
         version = pe.VS_FIXEDFILEINFO[0]
         actual_version = [version.FileVersionMS >> 16, version.FileVersionMS & 0xffff,
                           version.FileVersionLS >> 16, version.FileVersionLS & 0xffff]
-        assert actual_version == [2026, 10, 15, 0], actual_version
+        assert actual_version == [2026, 10, 16, 0], actual_version
         return {"sha256": digest(path), "bytes": path.stat().st_size,
                 "x64": True, "subsystem": subsystem, "file_version": actual_version,
                 "exact_embedded_icon_sizes": sorted(expected_icons)}

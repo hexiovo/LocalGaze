@@ -40,16 +40,16 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LocalGaze-2026.10.15.0-Windows-x64
+          name: LocalGaze-2026.10.16.0-Windows-x64
           path: |
-            release/LocalGaze-2026.10.15.0.zip
-            build-artifacts/windows-2026.10.15.0/delivery-manifest.json
+            release/LocalGaze-2026.10.16.0.zip
+            build-artifacts/windows-2026.10.16.0/delivery-manifest.json
       - name: Publish tagged GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/LocalGaze-2026.10.15.0.zip
-            build-artifacts/windows-2026.10.15.0/delivery-manifest.json
+            release/LocalGaze-2026.10.16.0.zip
+            build-artifacts/windows-2026.10.16.0/delivery-manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

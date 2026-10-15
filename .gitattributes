@@ -1,0 +1,8 @@
+# Preserve verified upstream notices byte-for-byte on Windows checkouts.
+/build_tools/windows/license_sources/** -text
+/third_party/licenses/** -text
+
+# Treat packaged artwork and documentation as binary assets.
+*.pdf binary
+*.png binary
+*.ico binary

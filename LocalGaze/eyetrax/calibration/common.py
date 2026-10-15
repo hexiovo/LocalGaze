@@ -228,6 +228,7 @@ def _pulse_and_capture(
     window_name: str = "Calibration",
     show_real_time: bool = False,
     show_camera: bool = False,
+    on_target_checkpoint=None,
 ):
     """Capture fixed targets through A's gate and B's post-ready commit rule."""
 
@@ -259,6 +260,9 @@ def _pulse_and_capture(
             "target_statuses": target_statuses,
             "receipts": receipt_statuses,
             "gate_config": gate_config_record,
+            "feature_formula_version": getattr(gaze_estimator, "feature_formula_version", None),
+            "feature_schema": getattr(gaze_estimator, "feature_schema", None),
+            "canvas_size_px": getattr(gaze_estimator, "screen_info", None),
             "minimum_open_eye_frames": MIN_OPEN_EYE_FRAMES,
             "minimum_open_eye_span_ms": MIN_OPEN_EYE_SPAN_NS / 1_000_000,
             "maximum_target_capture_ms": MAX_TARGET_CAPTURE_NS / 1_000_000,
@@ -272,9 +276,25 @@ def _pulse_and_capture(
             return feats, targs, metadata
         return None if abort_reason else (feats, targs)
 
+    def persist_target(target_status, samples, receipts):
+        if callable(on_target_checkpoint):
+            on_target_checkpoint({
+                "target_status": target_status,
+                "samples": samples,
+                "receipts": receipts,
+                "visit_id": visit_id,
+                "capture_id": capture_id,
+                "gate_config": gate_config_record,
+                "feature_formula_version": getattr(gaze_estimator, "feature_formula_version", None),
+                "feature_schema": getattr(gaze_estimator, "feature_schema", None),
+                "canvas_size_px": getattr(gaze_estimator, "screen_info", None),
+            })
+
     for target_index, (x, y) in enumerate(pts):
         target_id = (int(x), int(y))
         target_capture_id = uuid.uuid4().hex
+        target_pulse_receipts: list[dict[str, Any]] = []
+        pulse_frame_received = False
         pulse_start_ns = time.monotonic_ns()
         while (time.monotonic_ns() - pulse_start_ns) / 1_000_000_000 < pulse_d:
             ok, frame = cap.read()
@@ -282,28 +302,38 @@ def _pulse_and_capture(
             frame_id = frame_receipt_id()
             if ok and frame is not None:
                 received_count += 1
+                pulse_frame_received = True
             elapsed = (receipt_ns - pulse_start_ns) / 1_000_000_000
             canvas = np.zeros((sh, sw, 3), dtype=np.uint8)
             final_radius = 15 + int(15 * abs(np.sin(2 * np.pi * elapsed)))
             cv2.circle(canvas, (x, y), final_radius, (0, 255, 0), -1)
             cv2.imshow(window_name, canvas)
-            receipt_statuses.append({
+            pulse_receipt = {
                 "frame_id": frame_id, "visit_id": visit_id, "target_id": target_id,
                 "capture_id": target_capture_id, "received_monotonic_ns": receipt_ns,
-                "phase": "target_pulse", "status": "not_qualified",
-                "reason": "target_not_stationary", "gate_ready": False,
+                "phase": "target_pulse",
+                "status": "not_qualified" if ok and frame is not None else "rejected",
+                "reason": "target_not_stationary" if ok and frame is not None else "camera_read_failed",
+                "gate_ready": False,
                 "reset_required": False, "qualified": False, "committed": False,
-            })
+            }
+            receipt_statuses.append(pulse_receipt)
+            target_pulse_receipts.append(pulse_receipt)
             if cv2.waitKey(1) == 27:
                 abort_reason = "cancelled_during_target_pulse"
-                target_statuses.append({
-                    "visit_id": visit_id, "target_id": target_id,
-                    "capture_id": target_capture_id, "accepted": False,
-                    "status": "cancelled", "reason": abort_reason,
-                    "qualified_receipt_count": 0,
-                })
                 break
+        if not abort_reason and target_pulse_receipts and not pulse_frame_received:
+            abort_reason = "camera_read_failed_during_target_pulse"
         if abort_reason:
+            target_status = {
+                "visit_id": visit_id, "target_id": target_id,
+                "capture_id": target_capture_id, "accepted": False,
+                "status": "cancelled" if abort_reason.startswith("cancelled_") else "failed",
+                "reason": abort_reason,
+                "qualified_receipt_count": 0,
+            }
+            target_statuses.append(target_status)
+            persist_target(target_status, [], target_pulse_receipts)
             break
 
         canvas = np.zeros((sh, sw, 3), dtype=np.uint8)
@@ -316,6 +346,8 @@ def _pulse_and_capture(
         point_times_ns: list[int] = []
         provisional_start_ns = None
         target_seen_images: set[str] = set()
+        point_features: list[np.ndarray] = []
+        point_records: list[dict[str, Any]] = []
         accepted = False
         target_reason = "target_timeout"
 
@@ -403,10 +435,14 @@ def _pulse_and_capture(
                     sample_record = {
                         "frame_id": frame_id, "target_id": target_id, "visit_id": visit_id,
                         "capture_id": target_capture_id,
+                        "target_px": [float(x), float(y)],
                         "received_monotonic_ns": received_ns,
                         "target_display_monotonic_ns": target_display_ns,
                         "duplicate_image": False,
                         "timestamp_basis": "read_completion_not_exposure",
+                        "features": np.asarray(feature, dtype=np.float32).tolist(),
+                        "feature_formula_version": getattr(gaze_estimator, "feature_formula_version", None),
+                        "canvas_size_px": getattr(gaze_estimator, "screen_info", None),
                     }
                     provisional.append((np.asarray(feature), received_ns, sample_record))
                 if decision.reset_required:
@@ -470,7 +506,7 @@ def _pulse_and_capture(
             if accepted and point_times_ns and provisional_start_ns is not None
             else 0
         )
-        target_statuses.append({
+        target_status = {
             "visit_id": visit_id, "target_id": target_id,
             "capture_id": target_capture_id, "accepted": accepted,
             "status": "accepted" if accepted else ("cancelled" if abort_reason else "failed"),
@@ -480,7 +516,13 @@ def _pulse_and_capture(
             "first_provisional_monotonic_ns": provisional_start_ns,
             "target_display_monotonic_ns": target_display_ns,
             "target_timeout_ns": MAX_TARGET_CAPTURE_NS,
-        })
+        }
+        target_statuses.append(target_status)
+        persist_target(
+            target_status,
+            point_records if accepted else [],
+            [receipt for receipt in target_receipts],
+        )
         if abort_reason:
             break
         if not accepted:
@@ -489,12 +531,14 @@ def _pulse_and_capture(
 
     if abort_reason:
         for x, y in pts[len(target_statuses):]:
-            target_statuses.append({
+            target_status = {
                 "visit_id": visit_id, "target_id": (int(x), int(y)),
                 "accepted": False, "status": "not_attempted",
                 "reason": "visit_aborted_after_target_failure",
                 "qualified_receipt_count": 0,
-            })
+            }
+            target_statuses.append(target_status)
+            persist_target(target_status, [], [])
     return finish()
 
 

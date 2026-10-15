@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>LocalGaze — focused vision</title>
+  <rect x="64" y="64" width="896" height="896" rx="224" fill="#111C2D" stroke="#304259" stroke-width="8"/>
+  <path d="M232 512 C338 332 686 332 792 512 C686 692 338 692 232 512 Z" fill="none" stroke="#F2EFE6" stroke-width="64" stroke-linejoin="round"/>
+  <circle cx="512" cy="512" r="104" fill="#111C2D" stroke="#CFB77F" stroke-width="40"/>
+  <circle cx="512" cy="512" r="36" fill="#CFB77F"/>
+</svg>

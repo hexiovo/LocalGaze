@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import warnings
 from collections import deque
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as distribution_version
 from pathlib import Path
 from typing import Any, Hashable, Sequence
@@ -39,6 +40,87 @@ LEGACY_IRIS_FORMULA_VERSION = "legacy-iris-ring-477-472-v1"
 CALIBRATION_LEDGER_VERSION = "target-visit-ledger-v1"
 FIT_RESIDUAL_METHOD_VERSION = "calibration-fit-residuals-v1"
 FEATURE_SCALE_DESCRIPTION = "StandardScaler followed by optional feature scaling"
+
+
+@dataclass(frozen=True)
+class HeadMotionObservation:
+    """Read-only head geometry from the latest FaceMesh frame.
+
+    This side-channel is deliberately independent of the active gaze feature
+    formula and is never fed into model training or prediction.
+    """
+
+    available: bool
+    valid: bool
+    reason: str | None = None
+    center_xy_px: tuple[float, float] | None = None
+    scale_px: float | None = None
+    basis_x: tuple[float, float, float] | None = None
+    basis_y: tuple[float, float, float] | None = None
+    raw_points_px: tuple[tuple[int, tuple[float, float, float]], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly copy so callers cannot mutate cached state."""
+
+        return {
+            "available": self.available,
+            "valid": self.valid,
+            "reason": self.reason,
+            "center_xy_px": list(self.center_xy_px) if self.center_xy_px is not None else None,
+            "scale_px": self.scale_px,
+            "basis_x": list(self.basis_x) if self.basis_x is not None else None,
+            "basis_y": list(self.basis_y) if self.basis_y is not None else None,
+            "raw_points_px": {
+                str(index): list(point) for index, point in self.raw_points_px
+            },
+            "basis_interpretation": "3-D normalized FaceMesh landmark basis proxy; not ground-truth yaw/pitch/roll",
+        }
+
+
+def _head_motion_observation(landmarks: Sequence[Any], width: int, height: int) -> HeadMotionObservation:
+    """Build a formula-independent head motion observable from FaceMesh points."""
+
+    if width <= 0 or height <= 0:
+        return HeadMotionObservation(True, False, "invalid_image_dimensions")
+    try:
+        indices = (4, 10, 33, 263)
+        points = {
+            index: np.asarray(
+                (landmarks[index].x * width, landmarks[index].y * height, landmarks[index].z * width),
+                dtype=np.float64,
+            )
+            for index in indices
+        }
+        if not all(point.shape == (3,) and np.isfinite(point).all() for point in points.values()):
+            return HeadMotionObservation(True, False, "invalid_or_nonfinite_landmark")
+        eye_span = float(np.linalg.norm(points[263][:2] - points[33][:2]))
+        if not np.isfinite(eye_span) or eye_span <= 1e-6:
+            return HeadMotionObservation(True, False, "degenerate_outer_eye_span")
+        x_axis = points[263] - points[33]
+        x_norm = float(np.linalg.norm(x_axis))
+        if not np.isfinite(x_norm) or x_norm <= 1e-6:
+            return HeadMotionObservation(True, False, "degenerate_head_basis_x")
+        x_axis /= x_norm
+        y_axis = points[10] - points[4]
+        y_axis -= float(y_axis @ x_axis) * x_axis
+        y_norm = float(np.linalg.norm(y_axis))
+        if not np.isfinite(y_norm) or y_norm <= 1e-6:
+            return HeadMotionObservation(True, False, "degenerate_head_basis_y")
+        y_axis /= y_norm
+        return HeadMotionObservation(
+            available=True,
+            valid=True,
+            center_xy_px=(float(points[4][0]), float(points[4][1])),
+            scale_px=eye_span,
+            basis_x=tuple(float(value) for value in x_axis),
+            basis_y=tuple(float(value) for value in y_axis),
+            raw_points_px=tuple(
+                (index, tuple(float(value) for value in points[index]))
+                for index in indices
+            ),
+        )
+    except (AttributeError, IndexError, TypeError, ValueError, OverflowError):
+        return HeadMotionObservation(True, False, "invalid_landmark_input")
 
 
 def compute_pixel_ear(
@@ -326,6 +408,11 @@ class GazeEstimator:
             )
         else:
             self.face_mesh = None
+        self._last_head_motion_observation = HeadMotionObservation(
+            available=self.face_mesh is not None,
+            valid=False,
+            reason="not_yet_observed" if self.face_mesh is not None else "face_mesh_disabled",
+        )
         self.model_name = model_name
         self.model_kwargs = dict(model_kwargs or {})
         self.model: BaseModel = create_model(model_name, **self.model_kwargs)
@@ -352,6 +439,17 @@ class GazeEstimator:
         self._next_visit_number = 1
         self._loaded_legacy_formula = False
         self._sync_feature_metadata()
+
+    @property
+    def last_head_motion_observation(self) -> HeadMotionObservation:
+        """Immutable head geometry from the latest FaceMesh extraction."""
+
+        return self._last_head_motion_observation
+
+    def get_head_motion_observation(self) -> dict[str, Any]:
+        """Return a detached dictionary for motion processing and event logs."""
+
+        return self._last_head_motion_observation.to_dict()
 
     def _sync_feature_metadata(self) -> None:
         metadata = getattr(self.model, "metadata", None)
@@ -462,6 +560,11 @@ class GazeEstimator:
 
         if not results.multi_face_landmarks:
             self.last_eye_state = "no_face"
+            self._last_head_motion_observation = HeadMotionObservation(
+                available=True,
+                valid=False,
+                reason="no_face",
+            )
             self.last_feature_metadata = {"valid": False, "reason": "no_face", "stability_observables": None}
             self.last_runtime_flags = {"head_descriptor_outside_training_range": None}
             if return_more:
@@ -478,6 +581,11 @@ class GazeEstimator:
             return None, False
 
         landmarks = results.multi_face_landmarks[0].landmark
+        self._last_head_motion_observation = _head_motion_observation(
+            landmarks,
+            image_width,
+            image_height,
+        )
         compact = extract_compact_features(landmarks, image_width, image_height)
         self.last_feature_metadata = {
             "valid": compact.features is not None, "reason": compact.reason,
@@ -614,7 +722,7 @@ class GazeEstimator:
             X = X.reshape(1, -1)
         if y.ndim == 1:
             y = y.reshape(1, -1)
-        if X.shape[0] != y.shape[0] or y.shape[1] != 2:
+        if X.ndim != 2 or y.ndim != 2 or X.shape[0] != y.shape[0] or y.shape[1] != 2:
             raise ValueError("calibration X/y must have matching rows and 2-D targets")
         if X.ndim != 2 or X.shape[1] != self.feature_schema["feature_count"]:
             raise ValueError("calibration features do not match the active formula schema")
@@ -773,6 +881,59 @@ class GazeEstimator:
             }
         )
 
+        training["calibration_quality_summary"] = self._calibration_quality_summary(
+            included_in_current_fit=target_ids is not None
+        )
+
+    @staticmethod
+    def _prediction_residuals(model, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+        predictions = np.asarray(model.predict(X), dtype=np.float64)
+        if predictions.shape != (len(X), 2) or not np.all(np.isfinite(predictions)):
+            raise ValueError("calibration predictions must be an Nx2 finite matrix")
+        residuals = np.linalg.norm(predictions - y, axis=1)
+        if not np.all(np.isfinite(residuals)):
+            raise ValueError("calibration residuals must be finite")
+        return residuals
+
+    def _calibration_quality_summary(self, *, included_in_current_fit: bool) -> dict[str, Any]:
+        summary = {
+            "scope": "final_model_retained_calibration_ledger",
+            "independence_status": "training_not_independent",
+            "metric": "euclidean_residual_px",
+            "included_in_current_fit": included_in_current_fit,
+            "sample_count": len(self._calibration_ledger),
+            "by_target": [],
+            "by_target_visit": [],
+        }
+        if not self._calibration_ledger:
+            summary["reason"] = "no_calibration_ledger"
+            return summary
+        X, y, targets, visits = self._ledger_arrays()
+        residuals = self._prediction_residuals(self.model, X, y)
+        by_target: dict[Hashable, list[float]] = {}
+        by_visit: dict[tuple[Hashable, Hashable], list[float]] = {}
+        for target, visit, residual in zip(targets, visits, residuals):
+            by_target.setdefault(target, []).append(float(residual))
+            by_visit.setdefault((target, visit), []).append(float(residual))
+
+        def statistics(values):
+            return {
+                "n": len(values),
+                "mean_px": float(np.mean(values)),
+                "p95_px": float(np.percentile(values, 95)),
+                "max_px": float(np.max(values)),
+            }
+
+        summary["by_target"] = [
+            {"target_id": target, **statistics(values)}
+            for target, values in by_target.items()
+        ]
+        summary["by_target_visit"] = [
+            {"target_id": target, "visit_id": visit, **statistics(values)}
+            for (target, visit), values in by_visit.items()
+        ]
+        return summary
+
     def _visit_holdout_residual(
         self,
         X: np.ndarray,
@@ -839,8 +1000,7 @@ class GazeEstimator:
             )
         else:
             model.train(train_X, train_y, variable_scaling=variable_scaling)
-        predictions = model.predict(X[holdout_mask])
-        residuals = np.linalg.norm(predictions - y[holdout_mask], axis=1)
+        residuals = self._prediction_residuals(model, X[holdout_mask], y[holdout_mask])
         heldout_targets = [target for target, keep in zip(target_ids, holdout_mask) if keep]
         residuals_by_target: dict[Hashable, list[float]] = {}
         for target, residual in zip(heldout_targets, residuals):
@@ -871,6 +1031,49 @@ class GazeEstimator:
         accumulate: bool = True,
         feature_formula_version: str | None = None,
     ):
+        """Publish the model and its ledger only after the candidate is valid."""
+        X = np.asarray(X, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        if X.ndim != 2 or not len(X) or X.shape[1] != self.feature_schema["feature_count"]:
+            raise ValueError("training features must be nonempty and match the active formula schema")
+        if y.shape != (len(X), 2):
+            raise ValueError("training targets must be an Nx2 matrix aligned with features")
+        if not np.all(np.isfinite(X)) or not np.all(np.isfinite(y)):
+            raise ValueError("training features and targets must be finite")
+        if variable_scaling is not None:
+            variable_scaling = np.asarray(variable_scaling, dtype=np.float64)
+            if variable_scaling.shape != (X.shape[1],) or not np.all(np.isfinite(variable_scaling)):
+                raise ValueError("variable_scaling must be one finite value per feature")
+            variable_scaling = variable_scaling.copy()
+        candidate = copy.copy(self)
+        candidate.model = copy.deepcopy(self.model)
+        candidate._calibration_ledger = copy.deepcopy(self._calibration_ledger)
+        candidate._seen_calibration_frames = self._seen_calibration_frames.copy()
+        candidate._train_candidate(
+            X, y, variable_scaling,
+            target_ids=target_ids, visit_ids=visit_ids, frame_ids=frame_ids,
+            use_group_weights=use_group_weights, accumulate=accumulate,
+            feature_formula_version=feature_formula_version,
+        )
+        self.model = candidate.model
+        self._calibration_ledger = candidate._calibration_ledger
+        self._seen_calibration_frames = candidate._seen_calibration_frames
+        self._next_visit_number = candidate._next_visit_number
+        self._loaded_legacy_formula = candidate._loaded_legacy_formula
+
+    def _train_candidate(
+        self,
+        X,
+        y,
+        variable_scaling=None,
+        *,
+        target_ids: Sequence[Hashable] | None = None,
+        visit_ids: Sequence[Hashable] | None = None,
+        frame_ids: Sequence[Hashable] | None = None,
+        use_group_weights: bool | None = None,
+        accumulate: bool = True,
+        feature_formula_version: str | None = None,
+    ):
         """Fit only the selected formula; tagged calls refit retained visits."""
         if self.feature_formula_version == LEGACY_UNVERSIONED_FORMULA:
             raise ValueError("legacy-unversioned models are prediction-only; create a fresh estimator for recalibration")
@@ -887,6 +1090,8 @@ class GazeEstimator:
         if should_ledger:
             self._append_calibration_samples(X, y, target_ids, visit_ids, frame_ids)
             X_all, y_all, fit_targets, fit_visits = self._ledger_arrays()
+            if X_all.ndim != 2 or not len(X_all) or not np.all(np.isfinite(X_all)) or not np.all(np.isfinite(y_all)):
+                raise ValueError("calibration ledger must contain finite feature and target rows")
             weights = (
                 self._balanced_sample_weights(fit_targets, fit_visits)
                 if use_group_weights and fit_targets
@@ -902,7 +1107,7 @@ class GazeEstimator:
                     f"{self.model_name} does not support group-weighted calibration. "
                     "Choose Ridge for target/visit-balanced weighted fitting, or explicitly set "
                     "estimator.calibration_use_group_weights=False for the legacy unweighted fit. "
-                    "Raw calibration samples remain in the ledger."
+                    "The active model and calibration ledger remain unchanged."
                 )
             else:
                 X_fit, y_fit = X_all, y_all
@@ -915,17 +1120,22 @@ class GazeEstimator:
                 )
             else:
                 self.model.train(X_fit, y_fit, variable_scaling=variable_scaling)
-            predictions = self.model.predict(X_fit)
-            residuals = np.linalg.norm(predictions - y_fit, axis=1)
+            residuals = self._prediction_residuals(self.model, X_fit, y_fit)
             fit_residual = float(np.mean(residuals))
-            visit_holdout = self._visit_holdout_residual(
-                X_all,
-                y_all,
-                self._ledger_arrays()[2],
-                self._ledger_arrays()[3],
-                variable_scaling,
-                use_group_weights,
-            )
+            try:
+                visit_holdout = self._visit_holdout_residual(
+                    X_all, y_all, fit_targets, fit_visits,
+                    variable_scaling, use_group_weights,
+                )
+            except Exception as exc:
+                visit_holdout = {
+                    "method": "holdout_last_visit",
+                    "independence_status": "internal_not_independent",
+                    "value_px": None,
+                    "reason": "holdout_failed",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
             self._record_training_metadata(
                 X_fit,
                 y_fit,
@@ -942,8 +1152,7 @@ class GazeEstimator:
 
         X_fit, y_fit = np.asarray(X), np.asarray(y)
         self.model.train(X_fit, y_fit, variable_scaling=variable_scaling)
-        predictions = self.model.predict(X_fit)
-        residuals = np.linalg.norm(predictions - y_fit, axis=1)
+        residuals = self._prediction_residuals(self.model, X_fit, y_fit)
         self._record_training_metadata(
             X_fit,
             y_fit,

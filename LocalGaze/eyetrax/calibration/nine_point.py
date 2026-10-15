@@ -18,6 +18,11 @@ from eyetrax.calibration.common import (
     wait_for_face_and_countdown,
 )
 from eyetrax.utils.screen import get_screen_size
+from .misc import (
+    create_calibration_checkpoint,
+    load_calibration_checkpoint,
+    save_calibration_checkpoint,
+)
 
 
 _VISIT_PROMPTS = (
@@ -64,34 +69,148 @@ class BlueNoiseSampler:
         return pts
 
 
-def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
-    """Run three complete nine-point visits and return in-sample fit residuals."""
+def _checkpoint_visit(checkpoint, visit_index, prompt, visit_id):
+    visit = next(
+        (item for item in checkpoint["visits"] if item.get("visit_index") == visit_index),
+        None,
+    )
+    if visit is None:
+        visit = {
+            "visit_index": visit_index,
+            "instruction_only": prompt,
+            "posture_label": None,
+            "posture_measured": False,
+            "visit_id": visit_id,
+            "target_checkpoints": [],
+        }
+        checkpoint["visits"].append(visit)
+    return visit
+
+
+def _target_map(visit):
+    return {tuple(item["target_id"]): item for item in visit.get("target_checkpoints", [])}
+
+
+def _record_target_checkpoint(checkpoint, checkpoint_path, visit, event):
+    status = event["target_status"]
+    target_id = tuple(status["target_id"])
+    target = _target_map(visit).get(target_id)
+    if target is None:
+        target = {
+            "target_id": list(target_id),
+            "accepted": False,
+            "status": "not_attempted",
+            "samples": [],
+            "receipts": [],
+            "attempts": [],
+        }
+        visit["target_checkpoints"].append(target)
+    target["attempts"].append({
+        "target_status": status,
+        "capture_id": event["capture_id"],
+        "receipts": event["receipts"],
+    })
+    target_was_complete = target.get("accepted") is True and bool(target.get("samples"))
+    if target_was_complete and status.get("accepted") is not True:
+        target["rejected_recapture_reason"] = status.get("reason")
+        target["receipts"].extend(event["receipts"])
+        save_calibration_checkpoint(checkpoint_path, checkpoint)
+        return
+    target["accepted"] = status.get("accepted") is True
+    target["status"] = status.get("status")
+    target["reason"] = status.get("reason")
+    target["capture_id"] = event["capture_id"]
+    target["receipts"].extend(event["receipts"])
+    if target["accepted"]:
+        target["samples"] = event["samples"]
+    target["feature_formula_version"] = event["feature_formula_version"]
+    target["feature_schema"] = event["feature_schema"]
+    target["canvas_size_px"] = event["canvas_size_px"]
+    target["gate_config"] = event["gate_config"]
+    checkpoint["status"] = "in_progress" if target["accepted"] else "incomplete"
+    if target["accepted"]:
+        checkpoint["failure"] = None
+    elif status.get("status") != "not_attempted":
+        checkpoint["failure"] = {
+            "stage": "fixed_target_capture",
+            "reason": target["reason"],
+            "visit_index": visit["visit_index"],
+            "visit_id": visit["visit_id"],
+            "target_id": list(target_id),
+        }
+    save_calibration_checkpoint(checkpoint_path, checkpoint)
+
+
+def _assemble_visit(checkpoint, visit, expected_targets):
+    target_map = _target_map(visit)
+    samples, statuses, receipts, attempts, capture_ids = [], [], [], [], []
+    for target_id in expected_targets:
+        target = target_map.get(tuple(target_id))
+        if target is None:
+            statuses.append({
+                "visit_id": visit["visit_id"],
+                "target_id": list(target_id),
+                "accepted": False,
+                "status": "not_attempted",
+                "reason": "visit_not_completed",
+            })
+            continue
+        attempt_rows = target.get("attempts", [])
+        selected_attempt = next(
+            (
+                attempt for attempt in reversed(attempt_rows)
+                if attempt.get("target_status", {}).get("accepted") is True
+            ),
+            attempt_rows[-1] if attempt_rows else {},
+        )
+        latest = selected_attempt.get("target_status", {})
+        statuses.append(latest or {
+            "visit_id": visit["visit_id"],
+            "target_id": list(target_id),
+            "accepted": target.get("accepted") is True,
+            "status": target.get("status"),
+            "reason": target.get("reason"),
+        })
+        if target.get("accepted") is True:
+            samples.extend(target.get("samples", []))
+        receipts.extend(target.get("receipts", []))
+        attempts.extend(
+            {"target_id": list(target_id), **attempt}
+            for attempt in attempt_rows
+        )
+        for attempt in attempt_rows:
+            capture_id = attempt.get("capture_id")
+            if capture_id and capture_id not in capture_ids:
+                capture_ids.append(capture_id)
+    return {
+        "visit_id": visit["visit_id"],
+        "capture_id": capture_ids[-1] if capture_ids else None,
+        "capture_ids": capture_ids,
+        "samples": samples,
+        "target_statuses": statuses,
+        "target_attempt_history": attempts,
+        "receipts": receipts,
+        "gate_config": checkpoint["gate_config"],
+        "feature_formula_version": checkpoint["feature_formula_version"],
+        "feature_schema": checkpoint["feature_schema"],
+        "canvas_size_px": checkpoint["canvas_size_px"],
+        "visit_index": visit["visit_index"],
+        "instruction_only": visit.get("instruction_only"),
+        "posture_label": None,
+        "posture_measured": False,
+    }
+
+
+def run_9_point_calibration(
+    gaze_estimator, camera_index: int = 0, *, checkpoint_path=None, session_id=None,
+):
+    """Run three visits, reusing only validated accepted targets from a checkpoint."""
 
     sw, sh = get_screen_size()
     if hasattr(gaze_estimator, "set_screen_info"):
         gaze_estimator.set_screen_info(sw, sh)
     gate_config = calibration_gate_config_record()
     gaze_estimator.last_calibration_failure = None
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        print("摄像头未成功打开")
-        cap.release()
-        gaze_estimator.last_calibration_failure = {
-            "stage": "camera_open", "reason": "camera_open_failed",
-            "gate_config": gate_config, "visits": [],
-        }
-        return None, None
-
-    try:
-        import tkinter as tk
-
-        root = tk._default_root
-        if root:
-            root.update()
-            root.destroy()
-    except Exception:
-        pass
-
     order = [
         (1, 1),
         (0, 0),
@@ -104,18 +223,120 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
         (1, 2),
     ]
     points = compute_grid_points(order, sw, sh)
+    expected_targets = [tuple(point) for point in points]
+    canvas_size = getattr(gaze_estimator, "screen_info", None)
+    checkpoint = None
+    if checkpoint_path is not None:
+        try:
+            checkpoint = load_calibration_checkpoint(
+                checkpoint_path,
+                session_id=session_id,
+                feature_formula_version=gaze_estimator.feature_formula_version,
+                feature_schema=gaze_estimator.feature_schema,
+                canvas_size_px=canvas_size,
+                gate_config=gate_config,
+                target_order=[list(point) for point in points],
+            )
+        except (OSError, ValueError, TypeError) as exc:
+            gaze_estimator.last_calibration_failure = {
+                "stage": "checkpoint_validation",
+                "reason": "checkpoint_incompatible",
+                "error": f"{type(exc).__name__}: {exc}",
+                "gate_config": gate_config,
+            }
+            return None, None
+        if checkpoint is None:
+            checkpoint = create_calibration_checkpoint(
+                session_id=session_id,
+                feature_formula_version=gaze_estimator.feature_formula_version,
+                feature_schema=gaze_estimator.feature_schema,
+                canvas_size_px=canvas_size,
+                gate_config=gate_config,
+                target_order=[list(point) for point in points],
+            )
+            save_calibration_checkpoint(checkpoint_path, checkpoint)
+
+    def visit_is_complete(visit_index):
+        if checkpoint is None:
+            return False
+        visit = next(
+            (item for item in checkpoint["visits"] if item.get("visit_index") == visit_index),
+            None,
+        )
+        if visit is None:
+            return False
+        target_map = _target_map(visit)
+        return all(
+            target_id in target_map
+            and target_map[target_id].get("accepted") is True
+            and bool(target_map[target_id].get("samples"))
+            for target_id in expected_targets
+        )
+
+    cap = None
+    if checkpoint is None or not all(
+        visit_is_complete(index) for index in range(1, len(_VISIT_PROMPTS) + 1)
+    ):
+        cap = cv2.VideoCapture(camera_index)
+        if not cap.isOpened():
+            print("摄像头未成功打开")
+            cap.release()
+            failure = {
+                "stage": "camera_open", "reason": "camera_open_failed",
+                "gate_config": gate_config, "visits": [],
+            }
+            gaze_estimator.last_calibration_failure = failure
+            if checkpoint is not None:
+                checkpoint["status"] = "incomplete"
+                checkpoint["failure"] = failure
+                save_calibration_checkpoint(checkpoint_path, checkpoint)
+            return None, None
+
+    try:
+        import tkinter as tk
+
+        root = tk._default_root
+        if root and cap is not None:
+            root.update()
+            root.destroy()
+    except Exception:
+        pass
+
     visit_metadata = []
     all_features = []
     all_targets = []
     all_samples = []
     try:
         for visit_index, prompt in enumerate(_VISIT_PROMPTS, 1):
+            saved_visit = None
+            if checkpoint is not None:
+                saved_visit = next(
+                    (item for item in checkpoint["visits"] if item.get("visit_index") == visit_index),
+                    None,
+                )
+            if visit_is_complete(visit_index):
+                capture_metadata = _assemble_visit(checkpoint, saved_visit, expected_targets)
+                features = [
+                    np.asarray(sample["features"], dtype=np.float32)
+                    for sample in capture_metadata["samples"]
+                ]
+                targets = [sample["target_px"] for sample in capture_metadata["samples"]]
+                visit_metadata.append(capture_metadata)
+                all_features.extend(features)
+                all_targets.extend(targets)
+                all_samples.extend(capture_metadata["samples"])
+                continue
+
             if not _show_visit_prompt(sw, sh, prompt):
                 gaze_estimator.last_calibration_failure = {
                     "stage": "visit_prompt", "reason": "cancelled_by_user",
                     "failed_visit_index": visit_index, "gate_config": gate_config,
                     "visits": visit_metadata,
                 }
+                if checkpoint is not None:
+                    checkpoint["status"] = "incomplete"
+                    checkpoint["failure"] = gaze_estimator.last_calibration_failure
+                    save_calibration_checkpoint(checkpoint_path, checkpoint)
                 return None, None
             if not wait_for_face_and_countdown(cap, gaze_estimator, sw, sh, 2):
                 gaze_estimator.last_calibration_failure = {
@@ -123,12 +344,35 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
                     "failed_visit_index": visit_index, "gate_config": gate_config,
                     "visits": visit_metadata,
                 }
+                if checkpoint is not None:
+                    checkpoint["status"] = "incomplete"
+                    checkpoint["failure"] = gaze_estimator.last_calibration_failure
+                    save_calibration_checkpoint(checkpoint_path, checkpoint)
                 return None, None
-            visit_id = uuid.uuid4().hex
+            visit_id = saved_visit["visit_id"] if saved_visit else uuid.uuid4().hex
+            checkpoint_visit = (
+                _checkpoint_visit(checkpoint, visit_index, prompt, visit_id)
+                if checkpoint is not None else None
+            )
+            completed_targets = {
+                target_id for target_id, target in _target_map(checkpoint_visit).items()
+                if target.get("accepted") is True and target.get("samples")
+            } if checkpoint_visit else set()
+            missing_points = [
+                point for point in points if tuple(point) not in completed_targets
+            ]
+
+            def on_target_checkpoint(event):
+                if checkpoint is not None:
+                    _record_target_checkpoint(
+                        checkpoint, checkpoint_path, checkpoint_visit, event,
+                    )
+
             try:
                 result = _pulse_and_capture(
-                    gaze_estimator, cap, points, sw, sh,
+                    gaze_estimator, cap, missing_points, sw, sh,
                     visit_id=visit_id, return_metadata=True,
+                    on_target_checkpoint=on_target_checkpoint if checkpoint is not None else None,
                 )
             except Exception as exc:
                 gaze_estimator.last_calibration_failure = {
@@ -138,6 +382,10 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
                     "error": str(exc), "gate_config": gate_config,
                     "visits": visit_metadata,
                 }
+                if checkpoint is not None:
+                    checkpoint["status"] = "incomplete"
+                    checkpoint["failure"] = gaze_estimator.last_calibration_failure
+                    save_calibration_checkpoint(checkpoint_path, checkpoint)
                 return None, None
             if result is None:
                 gaze_estimator.last_calibration_failure = {
@@ -145,15 +393,26 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
                     "failed_visit_index": visit_index, "gate_config": gate_config,
                     "visits": visit_metadata,
                 }
+                if checkpoint is not None:
+                    checkpoint["status"] = "incomplete"
+                    checkpoint["failure"] = gaze_estimator.last_calibration_failure
+                    save_calibration_checkpoint(checkpoint_path, checkpoint)
                 return None, None
             features, targets, capture_metadata = result
-            capture_metadata["visit_index"] = visit_index
-            capture_metadata["instruction_only"] = prompt
-            capture_metadata["posture_label"] = None
-            capture_metadata["posture_measured"] = False
+            if checkpoint is not None:
+                capture_metadata = _assemble_visit(checkpoint, checkpoint_visit, expected_targets)
+                features = [
+                    np.asarray(sample["features"], dtype=np.float32)
+                    for sample in capture_metadata["samples"]
+                ]
+                targets = [sample["target_px"] for sample in capture_metadata["samples"]]
+            else:
+                capture_metadata["visit_index"] = visit_index
+                capture_metadata["instruction_only"] = prompt
+                capture_metadata["posture_label"] = None
+                capture_metadata["posture_measured"] = False
             visit_metadata.append(capture_metadata)
 
-            expected_targets = [tuple(point) for point in points]
             observed_targets = [tuple(status.get("target_id", ())) for status in capture_metadata.get("target_statuses", [])]
             visit_complete = (
                 len(observed_targets) == len(expected_targets)
@@ -193,10 +452,15 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
             "error": str(exc), "gate_config": gate_config,
             "visits": visit_metadata,
         }
+        if checkpoint is not None:
+            checkpoint["status"] = "incomplete"
+            checkpoint["failure"] = gaze_estimator.last_calibration_failure
+            save_calibration_checkpoint(checkpoint_path, checkpoint)
         return None, None
     finally:
-        cap.release()
-        cv2.destroyAllWindows()
+        if cap is not None:
+            cap.release()
+            cv2.destroyAllWindows()
 
     if len(visit_metadata) != len(_VISIT_PROMPTS) or not all_features:
         if gaze_estimator.last_calibration_failure is None:
@@ -204,7 +468,16 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
                 "stage": "visit_coverage", "reason": "three_complete_visits_required",
                 "gate_config": gate_config, "visits": visit_metadata,
             }
+        if checkpoint is not None:
+            checkpoint["status"] = "incomplete"
+            checkpoint["failure"] = gaze_estimator.last_calibration_failure
+            save_calibration_checkpoint(checkpoint_path, checkpoint)
         return None, None
+
+    if checkpoint is not None:
+        checkpoint["status"] = "samples_complete"
+        checkpoint["failure"] = None
+        save_calibration_checkpoint(checkpoint_path, checkpoint)
 
     X = np.asarray(all_features, dtype=np.float32)
     Y = np.asarray(all_targets, dtype=np.float64)
@@ -231,6 +504,10 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
             "stage": "model_training", "reason": f"training_error:{type(exc).__name__}",
             "error": str(exc), "gate_config": gate_config, "visits": visit_metadata,
         }
+        if checkpoint is not None:
+            checkpoint["status"] = "samples_complete"
+            checkpoint["failure"] = gaze_estimator.last_calibration_failure
+            save_calibration_checkpoint(checkpoint_path, checkpoint)
         return None, None
 
     frame_residuals = np.linalg.norm(predictions - Y, axis=1)
@@ -251,6 +528,10 @@ def run_9_point_calibration(gaze_estimator, camera_index: int = 0):
         sample_offset += visit_count
     mean_residual = float(np.mean([summary.mean_residual_px for summary in summaries]))
     gaze_estimator.last_calibration_failure = None
+    if checkpoint is not None:
+        checkpoint["status"] = "training_complete"
+        checkpoint["failure"] = None
+        save_calibration_checkpoint(checkpoint_path, checkpoint)
     print(f"九点校准训练内拟合残差均值: {mean_residual:.2f} px")
     return summaries, mean_residual
 

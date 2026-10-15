@@ -1,4 +1,29 @@
-/release/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Build and release output
+/build/
+/dist/
+/build-artifacts/
+/release/
+/tmp/
+
+# Local data and runtime output
+/SampleData/
+/output/
+**/*_log/
+**/*_logs/
+*.log
+*.tmp
+/LocalGaze/Data/
+
+# Local editor state
+.idea/
+.vscode/

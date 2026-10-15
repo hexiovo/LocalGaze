@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +11,166 @@ import numpy as np
 import pandas as pd
 
 from .common import CalibrationResidualResult, calibration_gate_config_record
+from capture_paths import (
+    INTERNAL_LAYOUT,
+    assert_no_reparse_components,
+    normalize_sidecar_layout,
+    sidecar_path,
+)
+
+
+CALIBRATION_CHECKPOINT_SCHEMA = "localgaze.calibration-checkpoint/1"
+
+
+def create_calibration_checkpoint(
+    *, session_id, feature_formula_version, feature_schema, canvas_size_px,
+    gate_config, target_order,
+):
+    return {
+        "schema": CALIBRATION_CHECKPOINT_SCHEMA,
+        "sidecar_layout": INTERNAL_LAYOUT,
+        "session_id": session_id,
+        "status": "in_progress",
+        "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "feature_formula_version": feature_formula_version,
+        "feature_schema": feature_schema,
+        "canvas_size_px": canvas_size_px,
+        "gate_config": gate_config,
+        "target_order": target_order,
+        "visits": [],
+        "failure": None,
+    }
+
+
+def load_calibration_checkpoint(
+    path, *, session_id, feature_formula_version, feature_schema,
+    canvas_size_px, gate_config, target_order,
+):
+    """Load only a complete, context-compatible calibration checkpoint."""
+    try:
+        path = assert_no_reparse_components(Path(path).expanduser())
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError("calibration checkpoint contains a symbolic link or junction") from exc
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as source:
+        checkpoint = json.load(source)
+    if not isinstance(checkpoint, dict):
+        raise ValueError("calibration checkpoint is incompatible: root")
+    try:
+        layout = normalize_sidecar_layout(checkpoint.get("sidecar_layout"))
+        root = path.parent.parent if path.parent.name == ".internal" else path.parent
+        expected_path = sidecar_path(root, path.name, layout=layout)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("calibration checkpoint sidecar layout is invalid") from exc
+    if expected_path != path:
+        raise ValueError("calibration checkpoint path does not match its declared layout")
+    expected = {
+        "schema": CALIBRATION_CHECKPOINT_SCHEMA,
+        "session_id": session_id,
+        "feature_formula_version": feature_formula_version,
+        "feature_schema": feature_schema,
+        "canvas_size_px": canvas_size_px,
+        "gate_config": gate_config,
+        "target_order": target_order,
+    }
+    for key, value in expected.items():
+        if checkpoint.get(key) != value:
+            raise ValueError(f"calibration checkpoint is incompatible: {key}")
+    if not isinstance(checkpoint.get("visits"), list):
+        raise ValueError("calibration checkpoint is incompatible: visits")
+    feature_count = int(feature_schema["feature_count"])
+    for visit in checkpoint["visits"]:
+        if not isinstance(visit, dict) or not isinstance(visit.get("target_checkpoints"), list):
+            raise ValueError("calibration checkpoint is incompatible: target records")
+        target_ids = set()
+        for target in visit["target_checkpoints"]:
+            if not isinstance(target, dict) or not isinstance(target.get("target_id"), list):
+                raise ValueError("calibration checkpoint is incompatible: target identity")
+            target_id = tuple(target["target_id"])
+            if target_id in target_ids:
+                raise ValueError("calibration checkpoint is incompatible: duplicate target")
+            target_ids.add(target_id)
+            if target.get("feature_formula_version") not in (None, feature_formula_version):
+                raise ValueError("calibration checkpoint is incompatible: target formula")
+            if target.get("feature_schema") not in (None, feature_schema):
+                raise ValueError("calibration checkpoint is incompatible: target feature schema")
+            if target.get("canvas_size_px") not in (None, canvas_size_px):
+                raise ValueError("calibration checkpoint is incompatible: target canvas")
+            if target.get("gate_config") not in (None, gate_config):
+                raise ValueError("calibration checkpoint is incompatible: target gate")
+            if target.get("accepted") is True:
+                samples = target.get("samples")
+                if not isinstance(samples, list) or not samples:
+                    raise ValueError("calibration checkpoint is incompatible: accepted target has no samples")
+                for sample in samples:
+                    if not isinstance(sample, dict):
+                        raise ValueError("calibration checkpoint is incompatible: sample record")
+                    features = np.asarray(sample.get("features"), dtype=np.float64)
+                    if (
+                        features.shape != (feature_count,)
+                        or not np.all(np.isfinite(features))
+                        or sample.get("feature_formula_version") != feature_formula_version
+                        or sample.get("target_id") != target["target_id"]
+                        or sample.get("target_px") != target["target_id"]
+                        or sample.get("visit_id") != visit.get("visit_id")
+                        or not sample.get("capture_id")
+                        or not sample.get("frame_id")
+                    ):
+                        raise ValueError("calibration checkpoint is incompatible: accepted sample provenance")
+    return checkpoint
+
+
+def save_calibration_checkpoint(path, checkpoint):
+    """Atomically persist the latest accepted targets and capture receipts."""
+    path = assert_no_reparse_components(Path(path).expanduser())
+    if not isinstance(checkpoint, dict):
+        raise ValueError("calibration checkpoint must be an object")
+    try:
+        layout = normalize_sidecar_layout(checkpoint.get("sidecar_layout"))
+    except ValueError as exc:
+        raise ValueError("calibration checkpoint sidecar layout is invalid") from exc
+    root = path.parent.parent if path.parent.name == ".internal" else path.parent
+    expected_path = sidecar_path(
+        root,
+        path.name,
+        layout=layout,
+        create_parent=layout == INTERNAL_LAYOUT,
+    )
+    if expected_path != path:
+        raise ValueError("calibration checkpoint path does not match its declared layout")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint["updated_at_utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as output:
+            json.dump(checkpoint, output, ensure_ascii=False, indent=2, allow_nan=False, default=lambda item: item.tolist() if hasattr(item, "tolist") else str(item))
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return path
+
+
+def mark_calibration_checkpoint_completed(path, *, model_path, workbook_path):
+    """Retain the recovery record and mark which final outputs were published."""
+    path = assert_no_reparse_components(Path(path).expanduser())
+    with path.open("r", encoding="utf-8") as source:
+        checkpoint = json.load(source)
+    if not isinstance(checkpoint, dict) or checkpoint.get("schema") != CALIBRATION_CHECKPOINT_SCHEMA:
+        raise ValueError("calibration checkpoint is incompatible: root")
+    checkpoint["status"] = "completed"
+    checkpoint["failure"] = None
+    checkpoint["completed_at_utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    checkpoint["outputs"] = {
+        "model": str(Path(model_path).expanduser().resolve()),
+        "calibration_workbook": str(Path(workbook_path).expanduser().resolve()),
+    }
+    save_calibration_checkpoint(path, checkpoint)
 
 
 def _json(value):
@@ -21,11 +182,17 @@ def write_calibration_status(output_root, session_id, failure, *, feature_formul
 
     if not isinstance(session_id, str) or not session_id or Path(session_id).name != session_id or session_id in {".", ".."}:
         raise ValueError("session_id must be a single filename component")
-    output_root = Path(output_root).expanduser().resolve()
-    path = output_root / f"{session_id}.calibration-status.json"
+    output_root = assert_no_reparse_components(Path(output_root).expanduser()).resolve(strict=False)
+    path = sidecar_path(
+        output_root,
+        f"{session_id}.calibration-status.json",
+        layout=INTERNAL_LAYOUT,
+        create_parent=True,
+    )
     failure_data = dict(failure or {})
     payload = {
         "schema": "localgaze.calibration-status/1",
+        "sidecar_layout": INTERNAL_LAYOUT,
         "session_id": session_id,
         "status": "failed",
         "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -78,7 +245,8 @@ def _point_rows(result, *, mean, round_number=None):
 
 def save_calibration_results(model_path: Path, errors_per_point_9, errors_per_point_add,
                              mean_error_9, mean_errors_add, model_names=None, model_kwargs=None,
-                             *, model_metadata=None, overwrite=False):
+                             *, model_metadata=None, overwrite=False,
+                             model_reference_path=None):
     """Save complete residual vectors and explicit groups; protect prior files.
 
     Historical sheets/columns remain readable. Error/MeanError are fit residuals
@@ -118,6 +286,42 @@ def save_calibration_results(model_path: Path, errors_per_point_9, errors_per_po
     frame_rows = []
     receipt_rows = []
     coverage_rows = []
+    quality_summary = training.get("calibration_quality_summary", {})
+    quality_context = {
+        "ResidualKind": "training_fit_residual",
+        "Metric": quality_summary.get("metric", "euclidean_residual_px"),
+        "IndependenceStatus": quality_summary.get("independence_status", "training_not_independent"),
+        "Scope": quality_summary.get("scope", "final_model_retained_calibration_ledger"),
+        "ModelPath": str(Path(model_reference_path or model_path).expanduser().resolve()),
+        "FeatureFormulaVersion": metadata.get("feature_formula_version"),
+        "NativeModel": _json(metadata.get("native_model", {})),
+        "ModelKwargs": _json(model_kwargs),
+    }
+    quality_target_rows = [
+        {
+            **quality_context,
+            "TargetID": _json(row.get("target_id")),
+            "SampleCount": row.get("n"),
+            "MeanPx": row.get("mean_px"),
+            "P95Px": row.get("p95_px"),
+            "MaxPx": row.get("max_px"),
+            "IncludedInCurrentFit": quality_summary.get("included_in_current_fit"),
+        }
+        for row in quality_summary.get("by_target", [])
+    ]
+    quality_visit_rows = [
+        {
+            **quality_context,
+            "TargetID": _json(row.get("target_id")),
+            "VisitID": row.get("visit_id"),
+            "SampleCount": row.get("n"),
+            "MeanPx": row.get("mean_px"),
+            "P95Px": row.get("p95_px"),
+            "MaxPx": row.get("max_px"),
+            "IncludedInCurrentFit": quality_summary.get("included_in_current_fit"),
+        }
+        for row in quality_summary.get("by_target_visit", [])
+    ]
     for capture in captures:
         for sample in capture.get("samples", []):
             frame_rows.append({
@@ -134,6 +338,10 @@ def save_calibration_results(model_path: Path, errors_per_point_9, errors_per_po
             row.setdefault("visit_id", capture.get("visit_id"))
             row.setdefault("visit_index", capture.get("visit_index"))
             row["gate_config"] = _json(capture.get("gate_config", {}))
+            row["attempt_history"] = _json([
+                attempt for attempt in capture.get("target_attempt_history", [])
+                if tuple(attempt.get("target_id", ())) == tuple(row.get("target_id", ()))
+            ])
             coverage_rows.append({
                 key: _json(value) if isinstance(value, (dict, list, tuple, np.ndarray)) else value
                 for key, value in row.items()
@@ -162,6 +370,10 @@ def save_calibration_results(model_path: Path, errors_per_point_9, errors_per_po
                 pd.DataFrame(receipt_rows).to_excel(writer, sheet_name="CalibrationReceipts", index=False)
             if coverage_rows:
                 pd.DataFrame(coverage_rows).to_excel(writer, sheet_name="CalibrationCoverage", index=False)
+            if quality_target_rows:
+                pd.DataFrame(quality_target_rows).to_excel(writer, sheet_name="QualityByTarget", index=False)
+            if quality_visit_rows:
+                pd.DataFrame(quality_visit_rows).to_excel(writer, sheet_name="QualityByTargetVisit", index=False)
     print(f"校准拟合残差与方法记录已保存至：{excel_path}")
     return excel_path
 

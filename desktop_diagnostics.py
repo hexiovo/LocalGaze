@@ -53,7 +53,8 @@ def check_installation(report_path: Path) -> int:
 
             def backend_imports():
                 for name in ("eyetracking_pipeline", "ROIDrawing.roi_drawer",
-                             "EyeEvaluate.Evaluate.analysis_pipeline", "pre.pipeline",
+                             "EyeEvaluate.Evaluate.analysis_pipeline", "EyeEvaluate.Evaluate.analysis_options",
+                             "pre.pipeline",
                              "eyetrax.features", "eyetrax.stability", "eyetrax.offset",
                              "eyetrax.utils.resources", "eyetrax._version"):
                     importlib.import_module(name)
@@ -63,6 +64,36 @@ def check_installation(report_path: Path) -> int:
                 return {"modules": ["capture", "ROI", "pre", "analysis", "features", "stability", "offset", "resource adapter"],
                         "camera_opened": False}
             check("lazy_backend_imports_and_separate_globals", backend_imports)
+
+            def durable_capture_and_brand_assets():
+                import inspect
+                import capture_persistence
+                import capture_export_recovery
+                import job_logging
+                import eyetrax.movement
+                import eyetrax.movement_runtime
+                from PIL import Image
+                guide_assets = sorted((Path(__file__).resolve().parent / "assets" / "guide").glob("*.png"))
+                expected_guide_assets = [
+                    "01-workbench.png", "02-analysis-selection.png", "03-analysis-parameters.png",
+                    "04-known-target.png", "05-environment-check.png",
+                ]
+                assert [path.name for path in guide_assets] == expected_guide_assets
+                for path in guide_assets:
+                    with Image.open(path) as image:
+                        image.verify()
+                assert "output_root" in inspect.signature(capture_persistence.cleanup_capture_sidecars).parameters
+                from eyetracking_pipeline import retry_capture_from_context, retry_capture_export
+                assert callable(retry_capture_from_context)
+                assert callable(retry_capture_export)
+                asset_root = Path(__file__).resolve().parent / "assets"
+                with Image.open(asset_root / "localgaze.ico") as icon:
+                    sizes = sorted(icon.ico.sizes())
+                assert sizes == [(s, s) for s in (16, 20, 24, 30, 32, 36, 40, 44, 48, 64, 96, 128, 256)]
+                return {"durable_modules": "imported", "verified_root_cleanup": True,
+                        "recovery_entry_points": "available", "icon_sizes": sizes,
+                        "guide_screenshots": [path.name for path in guide_assets]}
+            check("durable_capture_modules_and_brand_assets", durable_capture_and_brand_assets)
 
             def versioned_algorithm_modules():
                 from eyetrax import __version__
@@ -132,7 +163,18 @@ def check_installation(report_path: Path) -> int:
                     root.update_idletasks()
                     assert len(app.notebook.tabs()) == 5
                     guide = app.guide_path.read_text(encoding="utf-8")
-                    assert app.guide_text.get("1.0", "end-1c") == guide
+                    rendered_guide = app.guide_text.get("1.0", "end-1c")
+                    guide_image_count = len(tuple(app.guide_image_dir.glob("*.png")))
+                    assert rendered_guide.startswith(guide)
+                    assert app.guide_path.name == "README.md"
+                    assert guide_image_count > 0
+                    assert len(app.guide_text.image_names()) == guide_image_count
+                    manual_path = app._user_manual_path()
+                    assert manual_path.is_file() and manual_path.read_bytes().startswith(b"%PDF-")
+                    opened_manual = []
+                    app._open_guide_file = lambda path, label: opened_manual.append((path, label))
+                    app.manual_button.invoke()
+                    assert opened_manual == [(manual_path, "产品介绍与使用手册 PDF")]
                     assert app._manager is None
                 finally:
                     root.destroy()
@@ -143,7 +185,10 @@ def check_installation(report_path: Path) -> int:
                     root.update_idletasks()
                 finally:
                     root.destroy()
-                return {"guide_loaded": True, "workbench_pages": 5, "ROI_view_constructed": True, "visible_window": False}
+                return {"guide_loaded": True, "guide": str(app.guide_path),
+                        "product_manual": str(manual_path),
+                        "guide_screenshots": guide_image_count,
+                        "workbench_pages": 5, "ROI_view_constructed": True, "visible_window": False}
             check("hidden_tk_workbench_guide_and_roi", hidden_views)
 
             def roi_workbook():
@@ -183,7 +228,11 @@ def check_installation(report_path: Path) -> int:
                 manager = JobManager()
                 pre_result = _wait_job(manager, "preprocess", {"model_path": str(model_dir), "source_path": str(data_dir),
                                        "output_root": str(work / "pre-output"), "time_unit": "seconds", "session_id": "打包检查"})
-                pre_table = pd.read_csv(work / "pre-output" / "检查.tsv", sep="\t")
+                pre_output_root = Path(pre_result["outputs"]["directory"]).resolve()
+                pre_table_path = Path(pre_result["outputs"]["processed_file"]).resolve()
+                assert pre_table_path.is_file() and pre_table_path.parent == pre_output_root
+                assert pre_table_path.name == "检查.tsv"
+                pre_table = pd.read_csv(pre_table_path, sep="\t")
                 assert len(pre_table) == 20 and "Pre_X" in pre_table
                 analysis = _wait_job(manager, "analyze", {"source_path": str(source), "output_root": str(work / "analysis-output"),
                                      "session_id": "打包分析", "time_unit": None})
@@ -191,8 +240,29 @@ def check_installation(report_path: Path) -> int:
                 assert any(p.endswith(".xlsx") for p in outputs.values())
                 assert any(p.endswith(".json") for p in outputs.values())
                 assert any(p.endswith(".csv") for p in outputs.values())
-                # Exercise one documented failure, including its frozen UTF-8 pipe.
-                manager.start("analyze", {"source_path": str(work / "不存在.tsv"), "output_root": str(work / "failed")})
+                text_analysis = _wait_job(manager, "analyze", {
+                    "source_path": str(source), "output_root": str(work / "analysis-txt-output"),
+                    "session_id": "打包分析TXT", "time_unit": None,
+                    "selected_metrics": ["trajectory", "fixation"],
+                    "analysis_config": {"fixation_min_samples": 4}, "table_format": "txt",
+                })
+                txt_outputs = text_analysis["outputs"]
+                metric_table = Path(txt_outputs["metrics"])
+                metadata_path = Path(txt_outputs["metadata"])
+                manifest_path = Path(txt_outputs["manifest"])
+                assert metric_table.suffix == ".txt" and b"\t" in metric_table.read_bytes()
+                metadata_text = metadata_path.read_text(encoding="utf-8-sig")
+                assert "table_format: txt" in metadata_text
+                assert "selected_metric_groups: trajectory, fixation" in metadata_text
+                assert "fixation_min_samples: 4" in metadata_text
+                assert manifest_path.parent.name == ".internal"
+                txt_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                assert txt_manifest["analysis"]["table_format"] == "txt"
+                assert txt_manifest["analysis"]["methods"]["selected_metric_groups"] == ["trajectory", "fixation"]
+                # Exercise an asynchronous worker failure after the existing-file payload check.
+                invalid_source = work / "无效分析输入.tsv"
+                invalid_source.write_text("not_gaze_column\nvalue\n", encoding="utf-8")
+                manager.start("analyze", {"source_path": str(invalid_source), "output_root": str(work / "failed")})
                 deadline = time.monotonic() + 120
                 while manager.busy and time.monotonic() < deadline:
                     manager.poll()
@@ -202,7 +272,8 @@ def check_installation(report_path: Path) -> int:
                 assert manager.closed
                 return {"preprocess": pre_result["type"], "analysis": analysis["type"],
                         "unicode_paths_and_pipe": True, "missing_input_failed": True,
-                        "owned_children_exited": True, "export_files": sorted(outputs)}
+                        "owned_children_exited": True, "export_files": sorted(outputs),
+                        "tab_delimited_txt_and_selected_metrics": True}
             check("real_owned_workers_preprocess_and_unified_exports", owned_workers)
 
         result = {"status": "passed" if all(r["status"] == "passed" for r in results) else "failed",

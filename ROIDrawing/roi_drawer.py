@@ -424,14 +424,29 @@ class ROIApp:
         self.overlay.attributes("-alpha", TRANSPARENCY)
         self.overlay.geometry(f"{screen.width}x{screen.height}{position}")
         self.overlay.config(bg="gray")
+        self.overlay.protocol("WM_DELETE_WINDOW", self.back_from_overlay)
 
-        self.button_window = tk.Toplevel(self.root)
-        self.button_window.overrideredirect(True)
+        # An owned toolbar stays above its overlay when drawing gives the
+        # canvas focus. Independent topmost windows can cover one another.
+        self.button_window = tk.Toplevel(self.overlay)
+        self.button_window.transient(self.overlay)
+        # Keep a native title bar: on Windows, overrideredirect tool windows
+        # lose the owner stacking guarantee when the canvas takes focus.
+        self.button_window.title("ROI 绘制")
+        self.button_window.resizable(False, False)
         self.button_window.attributes("-topmost", True)
-        self.button_window.geometry(f"120x38{position}")
         self.button_window.config(bg="gray25")
-        tk.Button(self.button_window, text="确认", command=self.confirm_current).pack(side="left", padx=4)
-        tk.Button(self.button_window, text="返回", command=self.back_from_overlay).pack(side="left", padx=4)
+        tk.Label(self.button_window, text="右键绘制 · 左键拖动黄色控制点", bg="gray25", fg="white").pack(padx=8, pady=(5, 0))
+        buttons = tk.Frame(self.button_window, bg="gray25")
+        buttons.pack(padx=4, pady=4)
+        tk.Button(buttons, text="确认 (Enter)", command=self.confirm_current).pack(side="left", padx=4)
+        tk.Button(buttons, text="返回 (Esc)", command=self.back_from_overlay).pack(side="left", padx=4)
+        self.button_window.geometry(position)
+        self.button_window.protocol("WM_DELETE_WINDOW", self.back_from_overlay)
+        for window in (self.overlay, self.button_window):
+            window.bind("<Escape>", self._cancel_overlay)
+            window.bind("<Return>", self._confirm_overlay)
+            window.bind("<KP_Enter>", self._confirm_overlay)
 
         self.canvas = tk.Canvas(self.overlay, bg="gray", highlightthickness=0, cursor="cross")
         self.canvas.pack(fill="both", expand=True)
@@ -448,20 +463,31 @@ class ROIApp:
         self.temp_center_id = None
         self._canvas_bounds = None
         self._clear_handles()
+        self.button_window.update_idletasks()
+        self.button_window.lift(self.overlay)
+        self.canvas.focus_force()
+
+    def _cancel_overlay(self, _event):
+        self.back_from_overlay()
+        return "break"
+
+    def _confirm_overlay(self, _event):
+        self.confirm_current()
+        return "break"
 
     def back_from_overlay(self):
-        if self.overlay is not None:
-            self.overlay.destroy()
-            self.overlay = None
+        self._clear_handles()
         if self.button_window is not None:
             self.button_window.destroy()
             self.button_window = None
+        if self.overlay is not None:
+            self.overlay.destroy()
+            self.overlay = None
         self.canvas = None
         self._active_canvas_size = None
         self.current_shape_id = None
         self.temp_center_id = None
         self._canvas_bounds = None
-        self._clear_handles()
         self.root.deiconify()
         self.toolbar.pack(padx=4, pady=4)
 

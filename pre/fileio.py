@@ -16,6 +16,15 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 
+from LocalGaze.capture_paths import (
+    INTERNAL_LAYOUT,
+    LEGACY_LAYOUT,
+    existing_sidecar_path,
+    normalize_sidecar_layout,
+    owned_sidecar_path,
+    sidecar_path,
+)
+
 
 DATA_SUFFIXES = {".xlsx", ".xlsm", ".csv", ".tsv", ".txt"}
 MODEL_SUFFIXES = {".xlsx", ".xlsm", ".pkl"}
@@ -71,9 +80,10 @@ def discover_files(path: Path, suffixes: set[str]) -> list[Path]:
 
 
 def read_gaze(path: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
-    suffix = path.suffix.lower()
+    source = Path(path).expanduser().resolve()
+    suffix = source.suffix.lower()
     if suffix in {".xlsx", ".xlsm"}:
-        with pd.ExcelFile(path) as excel:
+        with pd.ExcelFile(source) as excel:
             sheet_names = list(excel.sheet_names)
         preferred = ["眼动数据", "EyeData", "GazeData", "gaze_data"]
         candidates = preferred + [name for name in sheet_names if name not in preferred]
@@ -82,17 +92,25 @@ def read_gaze(path: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
             if sheet not in sheet_names:
                 continue
             try:
-                frame = pd.read_excel(path, sheet_name=sheet)
+                header = pd.read_excel(source, sheet_name=sheet, nrows=0)
+                dtype = _nanosecond_text_dtype(header.columns)
+                frame = pd.read_excel(source, sheet_name=sheet, dtype=dtype)
                 columns = resolve_columns(frame)
-                return frame, {"kind": "excel", "sheet": sheet, "columns": columns}
+                return frame, {
+                    "kind": "excel", "sheet": sheet, "columns": columns,
+                    **_source_provenance(source),
+                }
             except ValueError as exc:
                 errors.append(f"{sheet}: {exc}")
         raise ValueError("No Excel sheet contains recognizable time, X, and Y columns; " + "; ".join(errors))
-    delimiter, encoding = _detect_text_format(path)
-    frame = pd.read_csv(path, sep=delimiter, encoding=encoding)
+    delimiter, encoding = _detect_text_format(source)
+    header = pd.read_csv(source, sep=delimiter, encoding=encoding, nrows=0)
+    dtype = _nanosecond_text_dtype(header.columns)
+    frame = pd.read_csv(source, sep=delimiter, encoding=encoding, dtype=dtype)
     return frame, {
         "kind": "text", "delimiter": delimiter, "encoding": encoding,
         "columns": resolve_columns(frame),
+        **_source_provenance(source),
     }
 
 
@@ -285,8 +303,7 @@ def _read_analysis_frame(path: Path) -> tuple[pd.DataFrame, dict[str, Any], dict
                 if columns["x_raw"] is not None and columns["y_raw"] is not None:
                     # Preserve source ns text before pandas can infer a nullable
                     # large-integer column as float64 and round values above 2^53.
-                    ns_column = columns["received_monotonic_ns"]
-                    dtype = {ns_column: object} if ns_column is not None else None
+                    dtype = _nanosecond_text_dtype(header.columns)
                     frame = pd.read_excel(path, sheet_name=sheet, dtype=dtype)
                     return frame, {"kind": "excel", "sheet": sheet}, columns
             except (ValueError, KeyError) as exc:
@@ -301,11 +318,9 @@ def _read_analysis_frame(path: Path) -> tuple[pd.DataFrame, dict[str, Any], dict
     columns = _analysis_column_map(header)
     if columns["x_raw"] is None or columns["y_raw"] is None:
         raise ValueError("No explicit raw gaze X/Y columns were found; smoothed coordinates are not an analysis fallback")
-    # Pin only the selected ns field to object dtype. This preserves exact text
-    # digits and still lets _monotonic_ns_values reject already-rounded floats
-    # from numeric source cells above the exact IEEE-754 integer range.
-    ns_column = columns["received_monotonic_ns"]
-    dtype = {ns_column: object} if ns_column is not None else None
+    # Pin every nanosecond-named field to object dtype before pandas can infer a
+    # nullable large-integer column as float64 and round values above 2^53.
+    dtype = _nanosecond_text_dtype(header.columns)
     frame = pd.read_csv(path, sep=delimiter, encoding=encoding, dtype=dtype)
     return frame, {"kind": "text", "delimiter": delimiter, "encoding": encoding}, columns
 
@@ -331,6 +346,39 @@ def _pick_analysis_column(frame: pd.DataFrame, aliases: tuple[str, ...], role: s
 
 
 def _read_analysis_manifest(source: Path) -> tuple[dict[str, Any], Path | None]:
+    output_root = source.parent
+    capture_manifest_name = f"{source.stem}.manifest.json"
+    internal_manifest = sidecar_path(output_root, capture_manifest_name, layout=INTERNAL_LAYOUT)
+    legacy_manifest = sidecar_path(output_root, capture_manifest_name, layout=LEGACY_LAYOUT)
+    internal_exists = internal_manifest.exists() or internal_manifest.is_symlink()
+    legacy_exists = legacy_manifest.exists() or legacy_manifest.is_symlink()
+    if internal_exists and legacy_exists:
+        raise ValueError(f"Conflicting root and .internal capture manifests exist: {capture_manifest_name}")
+    if internal_exists or legacy_exists:
+        candidate = internal_manifest if internal_exists else legacy_manifest
+        if candidate.is_symlink() or not candidate.is_file():
+            raise ValueError(f"Capture manifest is not a regular file: {candidate}")
+        value = json.loads(candidate.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError(f"Analysis manifest must contain a JSON object: {candidate}")
+        declared = normalize_sidecar_layout(value.get("sidecar_layout"))
+        expected = existing_sidecar_path(output_root, capture_manifest_name, layout=declared)
+        if declared != (INTERNAL_LAYOUT if internal_exists else LEGACY_LAYOUT) or expected != candidate:
+            raise ValueError(f"Capture manifest path does not match its declared layout: {candidate}")
+        files = value.get("files")
+        recorded_manifest = files.get("manifest") if isinstance(files, dict) else None
+        if recorded_manifest is not None:
+            try:
+                owned_sidecar_path(
+                    output_root,
+                    recorded_manifest,
+                    name=capture_manifest_name,
+                    layout=declared,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                raise ValueError(f"Capture manifest contains a conflicting path reference: {candidate}") from exc
+        return value, candidate
+
     candidates = [source.with_suffix(".manifest.json"), source.with_suffix(source.suffix + ".manifest.json")]
     for candidate in candidates:
         if candidate.is_file():
@@ -624,6 +672,37 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _nanosecond_text_dtype(columns) -> dict[str, type] | None:
+    nanosecond_columns = {
+        str(column): object
+        for column in columns
+        if _is_nanosecond_column(str(column))
+    }
+    return nanosecond_columns or None
+
+
+def _is_nanosecond_column(name: str) -> bool:
+    normalized = _normalize(name)
+    raw = name.casefold().strip()
+    return (
+        "monotonicns" in normalized
+        or normalized == "receivedns"
+        or raw.endswith("_ns")
+        or raw.endswith(" ns")
+    )
+
+
+def _source_provenance(source: Path) -> dict[str, Any]:
+    manifest, manifest_path = _read_analysis_manifest(source)
+    return {
+        "source_path": str(source),
+        "source_sha256": _sha256_file(source),
+        "source_manifest_path": str(manifest_path) if manifest_path is not None else None,
+        "source_manifest_sha256": _sha256_file(manifest_path) if manifest_path is not None else None,
+        "source_capture_manifest": manifest,
+    }
+
+
 def resolve_columns(frame: pd.DataFrame) -> dict[str, str | None]:
     normalized = {_normalize(name): str(name) for name in frame.columns}
     found: dict[str, str | None] = {}
@@ -677,9 +756,11 @@ def write_result(
     bad_segments: pd.DataFrame,
     suspect_segments: pd.DataFrame,
 ) -> None:
+    sidecar = destination.with_suffix(destination.suffix + ".qc.json")
+    existing = [path for path in (destination, sidecar) if path.exists() or path.is_symlink()]
+    if existing:
+        raise FileExistsError(f"Output already exists: {existing}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists():
-        raise FileExistsError(f"Output already exists: {destination}")
     if metadata["kind"] == "excel":
         shutil.copy2(source, destination)
         keep_vba = source.suffix.lower() == ".xlsm"
@@ -710,7 +791,6 @@ def write_result(
             destination, sep=metadata["delimiter"], encoding=metadata["encoding"],
             index=False, lineterminator="\n",
         )
-        sidecar = destination.with_suffix(destination.suffix + ".qc.json")
         sidecar.write_text(json.dumps(qc, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

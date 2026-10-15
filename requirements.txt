@@ -1,0 +1,11 @@
+# Runtime dependencies for the Windows source launcher (Python 3.10 or 3.12, 64-bit).
+mediapipe==0.10.14
+numpy==2.2.6
+opencv-contrib-python==4.12.0.88
+openpyxl==3.1.5
+pandas==2.3.3
+Pillow==12.0.0
+scikit-learn==1.7.2
+scipy==1.15.3
+screeninfo==0.8.1
+xlrd==2.0.2

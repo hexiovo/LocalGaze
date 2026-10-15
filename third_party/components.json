@@ -1,0 +1,413 @@
+{
+  "schema_version": 1,
+  "generated_by": "build_tools/windows/collect_licenses.py",
+  "components": [
+    {
+      "name": "absl-py",
+      "version": "2.5.1",
+      "source": "https://github.com/abseil/abseil-py",
+      "license_files": [
+        "licenses/python/absl-py-2.5.1/absl_py-2.5.1.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "altgraph",
+      "version": "0.17.5",
+      "source": "https://github.com/ronaldoussoren/altgraph",
+      "license_files": [
+        "licenses/python/altgraph-0.17.5/altgraph-0.17.5.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "source": "https://pypi.org/project/attrs/26.1.0/",
+      "license_files": [
+        "licenses/python/attrs-26.1.0/attrs-26.1.0.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "source": "https://pypi.org/project/cffi/2.1.1/",
+      "license_files": [
+        "licenses/python/cffi-2.1.1/cffi-2.1.1.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "cloudpickle",
+      "version": "3.1.2",
+      "source": "https://github.com/cloudpipe/cloudpickle",
+      "license_files": [
+        "licenses/python/cloudpickle-3.1.2/cloudpickle-3.1.2.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "contourpy",
+      "version": "1.4.0",
+      "source": "https://github.com/contourpy/contourpy",
+      "license_files": [
+        "licenses/python/contourpy-1.4.0/contourpy-1.4.0.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "cycler",
+      "version": "0.12.1",
+      "source": "https://github.com/matplotlib/cycler",
+      "license_files": [
+        "licenses/python/cycler-0.12.1/cycler-0.12.1.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "et_xmlfile",
+      "version": "2.0.0",
+      "source": "https://foss.heptapod.net/openpyxl/et_xmlfile",
+      "license_files": [
+        "licenses/python/et_xmlfile-2.0.0/et_xmlfile-2.0.0.dist-info/LICENCE.rst"
+      ]
+    },
+    {
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "source": "https://github.com/google/flatbuffers/blob/v25.12.19/LICENSE",
+      "license_files": [
+        "licenses/upstream/flatbuffers/flatbuffers-25.12.19-LICENSE"
+      ]
+    },
+    {
+      "name": "fonttools",
+      "version": "4.67.0",
+      "source": "http://github.com/fonttools/fonttools",
+      "license_files": [
+        "licenses/python/fonttools-4.67.0/fonttools-4.67.0.dist-info/licenses/LICENSE",
+        "licenses/python/fonttools-4.67.0/fonttools-4.67.0.dist-info/licenses/LICENSE.external"
+      ]
+    },
+    {
+      "name": "jax",
+      "version": "0.11.2",
+      "source": "https://github.com/jax-ml/jax",
+      "license_files": [
+        "licenses/python/jax-0.11.2/jax-0.11.2.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "jaxlib",
+      "version": "0.11.2",
+      "source": "https://github.com/jax-ml/jax",
+      "license_files": [
+        "licenses/python/jaxlib-0.11.2/jaxlib-0.11.2.dist-info/licenses/LICENSE.txt"
+      ]
+    },
+    {
+      "name": "joblib",
+      "version": "1.6.0",
+      "source": "https://github.com/joblib/joblib",
+      "license_files": [
+        "licenses/python/joblib-1.6.0/joblib-1.6.0.dist-info/licenses/LICENSE.txt"
+      ]
+    },
+    {
+      "name": "kiwisolver",
+      "version": "1.5.1",
+      "source": "https://github.com/nucleic/kiwi",
+      "license_files": [
+        "licenses/python/kiwisolver-1.5.1/kiwisolver-1.5.1.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "matplotlib",
+      "version": "3.11.2",
+      "source": "https://matplotlib.org",
+      "license_files": [
+        "licenses/python/matplotlib-3.11.2/matplotlib-3.11.2.dist-info/LICENSE",
+        "licenses/python/matplotlib-3.11.2/matplotlib/mpl-data/fonts/ttf/LICENSE_DEJAVU",
+        "licenses/python/matplotlib-3.11.2/matplotlib/mpl-data/fonts/ttf/LICENSE_STIX"
+      ]
+    },
+    {
+      "name": "mediapipe",
+      "version": "0.10.14",
+      "source": "https://github.com/google/mediapipe",
+      "license_files": [
+        "licenses/python/mediapipe-0.10.14/mediapipe-0.10.14.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "ml_dtypes",
+      "version": "0.6.0",
+      "source": "https://github.com/jax-ml/ml_dtypes",
+      "license_files": [
+        "licenses/python/ml_dtypes-0.6.0/ml_dtypes-0.6.0.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "numpy",
+      "version": "2.2.6",
+      "source": "https://github.com/numpy/numpy",
+      "license_files": [
+        "licenses/python/numpy-2.2.6/numpy-2.2.6.dist-info/LICENSE.txt",
+        "licenses/python/numpy-2.2.6/numpy/_core/include/numpy/random/LICENSE.txt",
+        "licenses/python/numpy-2.2.6/numpy/ma/LICENSE",
+        "licenses/python/numpy-2.2.6/numpy/random/LICENSE.md"
+      ]
+    },
+    {
+      "name": "opencv-contrib-python",
+      "version": "4.12.0.88",
+      "source": "https://github.com/opencv/opencv-python",
+      "license_files": [
+        "licenses/python/opencv-contrib-python-4.12.0.88/cv2/LICENSE-3RD-PARTY.txt",
+        "licenses/python/opencv-contrib-python-4.12.0.88/cv2/LICENSE.txt",
+        "licenses/python/opencv-contrib-python-4.12.0.88/opencv_contrib_python-4.12.0.88.dist-info/LICENSE-3RD-PARTY.txt",
+        "licenses/python/opencv-contrib-python-4.12.0.88/opencv_contrib_python-4.12.0.88.dist-info/LICENSE.txt"
+      ]
+    },
+    {
+      "name": "openpyxl",
+      "version": "3.1.5",
+      "source": "https://foss.heptapod.net/openpyxl/openpyxl",
+      "license_files": [
+        "licenses/python/openpyxl-3.1.5/openpyxl-3.1.5.dist-info/LICENCE.rst"
+      ]
+    },
+    {
+      "name": "opt_einsum",
+      "version": "3.4.0",
+      "source": "https://pypi.org/project/opt-einsum/3.4.0/",
+      "license_files": [
+        "licenses/python/opt_einsum-3.4.0/opt_einsum-3.4.0.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "source": "https://github.com/pypa/packaging",
+      "license_files": [
+        "licenses/python/packaging-26.3/packaging-26.3.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "pandas",
+      "version": "2.3.3",
+      "source": "https://github.com/pandas-dev/pandas",
+      "license_files": [
+        "licenses/python/pandas-2.3.3/pandas-2.3.3.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "pefile",
+      "version": "2023.2.7",
+      "source": "https://github.com/erocarrera/pefile",
+      "license_files": [
+        "licenses/python/pefile-2023.2.7/pefile-2023.2.7.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "pillow",
+      "version": "12.0.0",
+      "source": "https://github.com/python-pillow/Pillow",
+      "license_files": [
+        "licenses/python/pillow-12.0.0/pillow-12.0.0.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "pip",
+      "version": "25.0.1",
+      "source": "https://github.com/pypa/pip",
+      "license_files": [
+        "licenses/python/pip-25.0.1/pip-25.0.1.dist-info/LICENSE.txt"
+      ]
+    },
+    {
+      "name": "protobuf",
+      "version": "4.25.9",
+      "source": "https://developers.google.com/protocol-buffers/",
+      "license_files": [
+        "licenses/python/protobuf-4.25.9/protobuf-4.25.9.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "pycparser",
+      "version": "3.11",
+      "source": "https://github.com/eliben/pycparser",
+      "license_files": [
+        "licenses/python/pycparser-3.11/pycparser-3.11.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "pyinstaller",
+      "version": "6.16.0",
+      "source": "https://pyinstaller.org",
+      "license_files": [
+        "licenses/python/pyinstaller-6.16.0/pyinstaller-6.16.0.dist-info/licenses/COPYING.txt"
+      ]
+    },
+    {
+      "name": "pyinstaller-hooks-contrib",
+      "version": "2026.8",
+      "source": "https://github.com/pyinstaller/pyinstaller-hooks-contrib",
+      "license_files": [
+        "licenses/python/pyinstaller-hooks-contrib-2026.8/pyinstaller_hooks_contrib-2026.8.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "pyparsing",
+      "version": "3.3.3",
+      "source": "https://github.com/pyparsing/pyparsing.git",
+      "license_files": [
+        "licenses/python/pyparsing-3.3.3/pyparsing-3.3.3.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0",
+      "source": "https://github.com/dateutil/dateutil",
+      "license_files": [
+        "licenses/python/python-dateutil-2.9.0.post0/python_dateutil-2.9.0.post0.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "pytz",
+      "version": "2026.5",
+      "source": "https://github.com/stub42/pytz.git",
+      "license_files": [
+        "licenses/python/pytz-2026.5/pytz-2026.5.dist-info/LICENSE.txt"
+      ]
+    },
+    {
+      "name": "pywin32-ctypes",
+      "version": "0.2.3",
+      "source": "https://github.com/enthought/pywin32-ctypes",
+      "license_files": [
+        "licenses/python/pywin32-ctypes-0.2.3/pywin32_ctypes-0.2.3.dist-info/LICENSE.txt"
+      ]
+    },
+    {
+      "name": "scikit-learn",
+      "version": "1.7.2",
+      "source": "https://github.com/scikit-learn/scikit-learn",
+      "license_files": [
+        "licenses/python/scikit-learn-1.7.2/scikit_learn-1.7.2.dist-info/licenses/COPYING",
+        "licenses/python/scikit-learn-1.7.2/sklearn/externals/array_api_compat/LICENSE",
+        "licenses/python/scikit-learn-1.7.2/sklearn/externals/array_api_extra/LICENSE"
+      ]
+    },
+    {
+      "name": "scipy",
+      "version": "1.15.3",
+      "source": "https://github.com/scipy/scipy",
+      "license_files": [
+        "licenses/python/scipy-1.15.3/scipy-1.15.3.dist-info/LICENSE.txt",
+        "licenses/python/scipy-1.15.3/scipy/_lib/_uarray/LICENSE",
+        "licenses/python/scipy-1.15.3/scipy/fft/_pocketfft/LICENSE.md",
+        "licenses/python/scipy-1.15.3/scipy/sparse/linalg/_eigen/arpack/COPYING",
+        "licenses/python/scipy-1.15.3/scipy/spatial/qhull_src/COPYING.txt"
+      ]
+    },
+    {
+      "name": "screeninfo",
+      "version": "0.8.1",
+      "source": "https://github.com/rr-/screeninfo",
+      "license_files": [
+        "licenses/python/screeninfo-0.8.1/screeninfo-0.8.1.dist-info/LICENSE.md"
+      ]
+    },
+    {
+      "name": "setuptools",
+      "version": "84.0.0",
+      "source": "https://github.com/pypa/setuptools",
+      "license_files": [
+        "licenses/python/setuptools-84.0.0/setuptools-84.0.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/autocommand-2.2.2.dist-info/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/backports.tarfile-1.2.0.dist-info/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/importlib_metadata-8.7.1.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/jaraco.text-4.0.0.dist-info/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/jaraco_context-6.1.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/jaraco_functools-4.4.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/more_itertools-10.8.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/packaging-26.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/platformdirs-4.4.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/tomli-2.4.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/wheel-0.46.3.dist-info/licenses/LICENSE.txt",
+        "licenses/python/setuptools-84.0.0/setuptools/_vendor/zipp-3.23.0.dist-info/licenses/LICENSE",
+        "licenses/python/setuptools-84.0.0/setuptools/config/_validate_pyproject/NOTICE",
+        "licenses/python/setuptools-84.0.0/setuptools/config/NOTICE"
+      ]
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "source": "https://github.com/benjaminp/six",
+      "license_files": [
+        "licenses/python/six-1.17.0/six-1.17.0.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "sounddevice",
+      "version": "0.5.6",
+      "source": "https://github.com/spatialaudio/python-sounddevice/",
+      "license_files": [
+        "licenses/python/sounddevice-0.5.6/sounddevice-0.5.6.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "threadpoolctl",
+      "version": "3.7.0",
+      "source": "https://github.com/joblib/threadpoolctl",
+      "license_files": [
+        "licenses/python/threadpoolctl-3.7.0/threadpoolctl-3.7.0.dist-info/licenses/LICENSE"
+      ]
+    },
+    {
+      "name": "tzdata",
+      "version": "2026.5",
+      "source": "https://github.com/python/tzdata",
+      "license_files": [
+        "licenses/python/tzdata-2026.5/tzdata-2026.5.dist-info/licenses/LICENSE",
+        "licenses/python/tzdata-2026.5/tzdata-2026.5.dist-info/licenses/licenses/LICENSE_APACHE"
+      ]
+    },
+    {
+      "name": "xlrd",
+      "version": "2.0.2",
+      "source": "http://www.python-excel.org/",
+      "license_files": [
+        "licenses/python/xlrd-2.0.2/xlrd-2.0.2.dist-info/LICENSE"
+      ]
+    },
+    {
+      "name": "CPython",
+      "version": "3.12.14",
+      "source": "https://www.python.org/downloads/",
+      "license_files": [
+        "licenses/runtime/CPython-LICENSE.txt"
+      ]
+    },
+    {
+      "name": "Tcl",
+      "version": "8.6.12",
+      "source": "https://github.com/tcltk/tcl/blob/core-8-6-12/license.terms",
+      "license_files": [
+        "licenses/upstream/Tcl/tcl-8.6.12-license.terms"
+      ]
+    },
+    {
+      "name": "Tk",
+      "version": "8.6.12",
+      "source": "https://www.tcl.tk/software/tcltk/license.html",
+      "license_files": [
+        "licenses/runtime/Tk-license.terms"
+      ]
+    },
+    {
+      "name": "EyeTrax (vendored)",
+      "version": "0.3.1",
+      "source": "https://github.com/ck-zhang/EyeTrax/blob/v1.0.0/LICENSE",
+      "license_files": [
+        "licenses/upstream/EyeTrax/eyetrax-1.0.0-LICENSE"
+      ],
+      "upstream_tag": "1.0.0"
+    }
+  ]
+}

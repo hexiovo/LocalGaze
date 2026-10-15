@@ -1,0 +1,45 @@
+name: Windows portable package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+      - name: Install build dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+        shell: pwsh
+      - name: Build and verify portable package
+        run: .\build_tools\windows\build.ps1 -PythonExe .\.venv\Scripts\python.exe
+        shell: pwsh
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalGaze-2026.10.15.0-Windows-x64
+          path: |
+            release/LocalGaze-2026.10.15.0.zip
+            build-artifacts/windows-2026.10.15.0/delivery-manifest.json
+      - name: Publish tagged GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/LocalGaze-2026.10.15.0.zip
+            build-artifacts/windows-2026.10.15.0/delivery-manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

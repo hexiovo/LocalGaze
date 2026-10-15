@@ -29,6 +29,15 @@ from eyetrax.offset import (
     estimate_offset,
     validate_correction_record,
 )
+from capture_paths import (
+    INTERNAL_LAYOUT,
+    LEGACY_LAYOUT,
+    assert_no_reparse_components,
+    existing_sidecar_path,
+    normalize_sidecar_layout,
+    owned_sidecar_path,
+    sidecar_path,
+)
 
 
 _SUPPORTED_FORMULAS = {
@@ -235,7 +244,8 @@ def _read_capture_observations(path: Path) -> list[OffsetObservation]:
     }
     observations: list[OffsetObservation] = []
     with path.open("r", encoding="utf-8-sig", newline="") as stream:
-        reader = csv.DictReader(stream, delimiter="\t")
+        delimiter = "," if path.suffix.lower() == ".csv" else "\t"
+        reader = csv.DictReader(stream, delimiter=delimiter)
         if not reader.fieldnames or not required.issubset(reader.fieldnames):
             raise ValueError("capture_columns_missing_for_offset")
         for row in reader:
@@ -265,11 +275,11 @@ def create_correction_from_target_capture(
     correction_path: str | Path,
 ) -> dict[str, Any]:
     """Estimate only from a completed known-target job's own capture and manifest."""
-    source = Path(capture_path).expanduser().resolve()
-    model = Path(model_path).expanduser().resolve()
-    destination = Path(correction_path).expanduser().resolve()
-    if not source.is_file() or source.suffix.lower() != ".txt":
-        raise ValueError("capture_path_must_be_existing_capture_txt")
+    source = assert_no_reparse_components(Path(capture_path).expanduser()).resolve(strict=True)
+    model = assert_no_reparse_components(Path(model_path).expanduser()).resolve(strict=True)
+    destination = assert_no_reparse_components(Path(correction_path).expanduser()).resolve(strict=False)
+    if not source.is_file() or source.suffix.lower() not in {".csv", ".txt"}:
+        raise ValueError("capture_path_must_be_existing_capture_csv_or_txt")
     if not destination.name or destination.suffix.lower() != ".json":
         raise ValueError("correction_path_must_end_in_json")
 
@@ -280,18 +290,53 @@ def create_correction_from_target_capture(
             "outputs": {}, "details": {"offset_status": "rejected", "offset_reason": "model_canvas_unavailable", "correction_json_written": False},
         }
 
-    manifest_path = source.with_suffix(".manifest.json")
+    output_root = source.parent
+    manifest_name = f"{source.stem}.manifest.json"
     try:
+        internal_manifest = sidecar_path(output_root, manifest_name, layout=INTERNAL_LAYOUT)
+        legacy_manifest = sidecar_path(output_root, manifest_name, layout=LEGACY_LAYOUT)
+        internal_exists = internal_manifest.exists() or internal_manifest.is_symlink()
+        legacy_exists = legacy_manifest.exists() or legacy_manifest.is_symlink()
+        if internal_exists and legacy_exists:
+            raise ValueError("capture_manifest_layout_conflict")
+        if internal_exists:
+            candidate_manifest = internal_manifest
+            candidate_layout = INTERNAL_LAYOUT
+        else:
+            candidate_manifest = legacy_manifest
+            candidate_layout = LEGACY_LAYOUT
+        manifest_path = assert_no_reparse_components(candidate_manifest)
         manifest_raw = manifest_path.read_bytes()
         manifest = json.loads(manifest_raw.decode("utf-8-sig"))
+        declared_layout = normalize_sidecar_layout(manifest.get("sidecar_layout"))
+        expected_manifest = existing_sidecar_path(
+            output_root,
+            manifest_name,
+            layout=declared_layout,
+        )
+        if declared_layout != candidate_layout or expected_manifest != manifest_path or not manifest_path.is_file():
+            raise ValueError("capture_manifest_path_does_not_match_declared_layout")
         captured_binding = _binding_from_dict(manifest.get("model_binding"))
         capture_metadata = manifest.get("target_capture")
         files = manifest.get("files")
+        recorded_samples = (
+            (files.get("samples") or files.get("csv" if source.suffix.lower() == ".csv" else "txt") or files.get("txt"))
+            if isinstance(files, dict) else None
+        )
+        recorded_manifest = files.get("manifest") if isinstance(files, dict) else None
+        if recorded_manifest is not None:
+            owned_sidecar_path(
+                output_root,
+                recorded_manifest,
+                name=manifest_name,
+                layout=declared_layout,
+            )
         if (
             manifest.get("workflow_mode") != "known_target_offset"
             or not isinstance(capture_metadata, dict)
             or not isinstance(files, dict)
-            or files.get("txt") != source.name
+            or recorded_samples != source.name
+            or manifest.get("table_format", "txt" if declared_layout == LEGACY_LAYOUT else "csv") != source.suffix.lower().lstrip(".")
             or manifest.get("session_id") != source.stem
         ):
             raise ValueError("capture_not_owned_known_target_job")

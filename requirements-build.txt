@@ -1,0 +1,3 @@
+# Build dependencies for the Windows portable package.
+-r requirements.txt
+pyinstaller==6.16.0

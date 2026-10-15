@@ -40,6 +40,16 @@ PINNED_LICENSES = {
     },
 }
 
+TCL_LICENSES = {
+    "8.6.12": PINNED_LICENSES["tcl"],
+    "8.6.15": {
+        "version": "8.6.15",
+        "file": "tcl-8.6.15-license.terms",
+        "source": "https://github.com/tcltk/tcl/blob/core-8-6-15/license.terms",
+        "sha256": "c0a69a2bfd757361ec7e6143973b103c90409316b49e9c88db26ad6388e79f16",
+    },
+}
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -225,11 +235,11 @@ def collect(project: Path, output: Path, notices_path: Path) -> dict[str, object
         })
 
         tcl_version = str(tkinter.Tcl().eval("info patchlevel"))
-        pinned_tcl = PINNED_LICENSES["tcl"]
-        if tcl_version != pinned_tcl["version"]:
+        pinned_tcl = TCL_LICENSES.get(tcl_version)
+        if pinned_tcl is None:
             raise RuntimeError(
                 f"The Tcl runtime is {tcl_version}; no pinned license source is available "
-                f"for that exact version (verified: {pinned_tcl['version']})"
+                f"for that exact version (verified: {', '.join(sorted(TCL_LICENSES))})"
             )
         tcl_source = pinned_source_file(project, pinned_tcl)
         tcl_component: dict[str, object] = {

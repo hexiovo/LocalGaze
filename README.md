@@ -7,7 +7,7 @@ LocalGaze 是面向 Windows 的本地眼动采集、预处理和分析工作台�
 ### 便携版
 
 1. 从 [GitHub Releases](https://github.com/hexiovo/LocalGaze/releases) 下载 Windows ZIP 并解压到有写入权限的文件夹。
-2. 双击 `LocalGaze.exe`。保留 ZIP 中的 `LocalGazeWorker.exe`、`ROIDrawing.exe`、`_internal` 和 `docs` 文件夹。
+2. 双击 `LocalGaze.exe`。保留 ZIP 中的 `LocalGazeWorker.exe`、`ROIDrawing.exe`、`_internal`、`docs` 和 `third_party` 文件夹。
 3. 在工作台选择会话 ID、输入文件和输出位置。程序不会把用户数据写进运行环境目录。
 
 也可使用下面的源码启动方式。
@@ -17,6 +17,8 @@ LocalGaze 是面向 Windows 的本地眼动采集、预处理和分析工作台�
 1. 安装 64 位 Python 3.12，或 Python 3.10，并确保 `py` 启动器可用。
 2. 从 GitHub 克隆仓库或下载并解压源码 ZIP。
 3. 双击 `launch_localgaze.bat`。首次运行会在仓库中创建 `.venv` 并安装项目依赖；之后会检查依赖并启动工作台。
+
+打开工作台后，可从“环境检查”查看完整的运行依赖。若当前运行环境就是项目自己的 `.venv`，可点“一键安装项目依赖”按仓库的 `requirements.txt` 安装；便携版和其他 Python 环境不会安装到全局环境。
 
 也可在 PowerShell 中手动运行：
 
@@ -34,8 +36,9 @@ py -3.12 -m venv .venv
 2. 按界面提示校准；采集前选择匹配的校准模型。
 3. 可选使用 ROI 绘制、预处理与质量检查，再选择输入文件运行分析和导出。
 4. 通过任务状态、输出清单和日志确认任务是否完成；取消的任务可能保留已生成的部分文件。
+5. 使用工作区顶部的“加载配置”或“保存配置”，在本地保存、恢复会话、采集、ROI、预处理、分析和导出设置。加载只恢复界面参数，不会自动启动任务；配置中记录的文件路径可以稍后再准备。
 
-产品手册位于 [docs/LocalGaze产品介绍与使用手册.pdf](docs/LocalGaze产品介绍与使用手册.pdf)，也可从工作台顶部打开。
+当前版操作说明见 [快速开始](docs/快速开始.txt)，工作台的“使用指南”页面也会显示这份说明。实验设计模板和 `localgaze-study-config` 技能位于 [docs/skills](docs/skills/README.md)。旧版 PDF 和截图不随当前发布包提供。
 
 ## 从源码构建 Windows 便携包
 
@@ -48,6 +51,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_tools\windows\build.
 
 构建输出写入被 Git 忽略的 `build-artifacts/` 和 `release/`。GitHub Actions 可在手动触发时生成可下载构件；推送 `v*` 标签时才创建 GitHub Release。
 
+如旧包或缓存被程序占用，关闭 LocalGaze 和 ROI 工具后可运行仓库根目录的 `cleanup.cmd`。它只清理脚本中列出的旧交付物和构建缓存，不处理 `.venv`、源码、测试或实验数据。
+
 ## 第三方许可与来源
 
 仓库没有为 LocalGaze 自有代码附加项目级开源许可证。`THIRD_PARTY_NOTICES.md` 和 `third_party/licenses/` 列出随源码及便携包分发的第三方组件来源与原始许可文本；这些许可仅适用于其中列明的组件。Windows 便携包也会在 `third_party/` 中携带这些通知。
@@ -57,8 +62,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_tools\windows\build.
 - 仓库不附带参与者数据、校准模型或真实采集样本。用户应自行保留原始数据和模型，并按需要备份输出。
 - 软件自检和合成数据检查不能证明真实摄像头或独立眼动精度；多显示器 DPI 行为尚未验证，也未覆盖特定电脑上的效果。
 - I-VT 眼跳结果是工程候选事件。屏幕尺寸、时间单位和坐标参考系必须有可信来源；结果不代表生理真值或独立精度。
-- 相机、光照、姿势、屏幕和安装路径都会影响采集；正式使用前请按产品手册检查当前设备与流程。
+- 相机、光照、姿势、屏幕和安装路径都会影响采集；正式使用前请阅读快速开始并按界面提示检查当前设备与流程。
 
 ## 版本
 
-当前程序与分析方法版本见 [version.md](version.md)。
+当前 Windows 程序版本为 `2026.10.31.0`，分析方法版本见 [version.md](version.md)。

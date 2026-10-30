@@ -54,10 +54,12 @@ from roi_contract import (
 class ROIApp:
     def __init__(self, root):
         self.root = root
-        self.root.overrideredirect(True)
+        self.root.title("ROI 提取与绘制工具")
         self.root.attributes("-topmost", True)
-        self.root.config(bg="gray25")
-        self.root.geometry("520x44+0+0")
+        self.root.config(bg="#FCF8F2")
+        self.root.resizable(False, False)
+        self.root.option_add("*Font", "{Microsoft YaHei UI} 10")
+        self.root.geometry("+60+60")
 
         self.root.update_idletasks()
         self.screens = enumerate_screens(
@@ -68,15 +70,21 @@ class ROIApp:
         )
         self.coordinate_reference = self._reference_for_screen(self.selected_screen)
 
-        self.toolbar = tk.Frame(root, bg="gray25")
-        self.toolbar.pack(padx=4, pady=4)
+        tk.Label(root, text="ROI 提取与绘制", font=("Microsoft YaHei UI", 16, "bold"),
+                 bg="#E9FBF1", fg="#27324A", padx=16, pady=10,
+                 relief="solid", bd=2).pack(fill="x", padx=12, pady=(12, 6))
+        self.toolbar = tk.Frame(root, bg="#FCF8F2")
+        self.toolbar.pack(padx=12, pady=8)
         self._add_button("圆形", lambda: self.open_overlay("circle"))
         self._add_button("矩形", lambda: self.open_overlay("rectangle"))
         self._add_button("椭圆", lambda: self.open_overlay("ellipse"))
         self._add_button("屏幕/坐标", self.edit_coordinate_reference)
         self._add_button("ROI管理", self.manage_rois)
         self._add_button("保存", self.save_all_prompt)
-        self._add_button("退出", self.root.destroy)
+        self._add_button("退出", self.close)
+        tk.Label(root, text="右键拖拽绘制 → 左键调整控制点 → Enter 确认 → 保存 Excel\nEsc 返回工具栏；在 ROI 管理中导入已有文件、调整优先级。",
+                 bg="#FCF8F2", fg="#27324A", justify="left").pack(padx=12, pady=(0, 12))
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.toolbar.bind("<Button-1>", self._start_move)
         self.toolbar.bind("<B1-Motion>", self._do_move)
@@ -95,7 +103,13 @@ class ROIApp:
         self._active_canvas_size: tuple[int, int] | None = None
 
     def _add_button(self, text, command):
-        tk.Button(self.toolbar, text=text, command=command).pack(side="left", padx=2)
+        tk.Button(self.toolbar, text=text, command=command, bg="#E9FBF1" if text != "保存" else "#20C46A",
+                  fg="#27324A", relief="solid", bd=2, padx=8, pady=5).pack(side="left", padx=3)
+
+    def close(self):
+        if self.roi_list and not messagebox.askyesno("退出", "ROI 尚未导出，确定退出吗？", parent=self.root):
+            return
+        self.root.destroy()
 
     def _start_move(self, event):
         self._drag_start_x, self._drag_start_y = event.x, event.y
@@ -118,10 +132,15 @@ class ROIApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("ROI 列表与优先级")
         dialog.transient(self.root)
-        dialog.geometry("720x380")
+        dialog.attributes("-topmost", True)
+        dialog.geometry(f"{min(1160, self.root.winfo_screenwidth() - 80)}x440")
+        dialog.minsize(640, 340)
 
         columns = ("priority", "name", "shape", "boundary", "geometry", "reference")
-        tree = ttk.Treeview(dialog, columns=columns, show="headings", selectmode="browse")
+        from tkinter import font as tkfont
+        table_font = tkfont.Font(family="Microsoft YaHei UI", size=10)
+        ttk.Style(dialog).configure("ROI.Treeview", rowheight=table_font.metrics("linespace") + 8)
+        tree = ttk.Treeview(dialog, columns=columns, show="headings", selectmode="browse", style="ROI.Treeview")
         headings = {
             "priority": "优先级（小者优先）",
             "name": "名称",
@@ -130,11 +149,15 @@ class ROIApp:
             "geometry": "几何参数",
             "reference": "坐标参考",
         }
-        widths = {"priority": 125, "name": 125, "shape": 75, "boundary": 75, "geometry": 190, "reference": 120}
+        widths = {"priority": 190, "name": 230, "shape": 110, "boundary": 110, "geometry": 400, "reference": 200}
         for column in columns:
             tree.heading(column, text=headings[column])
-            tree.column(column, width=widths[column], stretch=column in {"geometry", "reference"})
+            width = max(widths[column], table_font.measure(headings[column]) + 24)
+            tree.column(column, width=width, minwidth=width, stretch=column in {"geometry", "reference"})
         tree.pack(fill="both", expand=True, padx=8, pady=8)
+        scroll = ttk.Scrollbar(dialog, orient="horizontal", command=tree.xview)
+        scroll.pack(fill="x", padx=8, pady=(0, 6))
+        tree.configure(xscrollcommand=scroll.set)
 
         def refresh(selected_id: str | None = None):
             for item in tree.get_children():
@@ -233,6 +256,10 @@ class ROIApp:
 
         buttons = ttk.Frame(dialog)
         buttons.pack(fill="x", padx=8, pady=(0, 8))
+        # Reserve commands and scrollbar before allocating remaining space to
+        # the table, including Windows displays with scaled fonts.
+        buttons.pack_configure(side="bottom", before=tree)
+        scroll.pack_configure(side="bottom", before=tree)
         ttk.Button(buttons, text="上移优先级", command=lambda: move_selected(-1)).pack(side="left", padx=3)
         ttk.Button(buttons, text="下移优先级", command=lambda: move_selected(1)).pack(side="left", padx=3)
         ttk.Button(buttons, text="导入工作簿", command=import_workbook).pack(side="left", padx=3)
@@ -453,6 +480,7 @@ class ROIApp:
         self.canvas.bind("<ButtonPress-3>", self.on_mouse_down)
         self.canvas.bind("<B3-Motion>", self.on_mouse_move)
         self.canvas.bind("<ButtonRelease-3>", self.on_mouse_up)
+        self.canvas.bind("<Configure>", self._canvas_resized)
         self.overlay.update_idletasks()
         self.canvas.update_idletasks()
         self._active_canvas_size = (
@@ -522,9 +550,9 @@ class ROIApp:
 
     def _canonical_candidate(self):
         """Build the selected shape in local reference pixel-center coordinates."""
-        canvas_width, canvas_height = self._active_canvas_size or (
-            self.canvas.winfo_width(), self.canvas.winfo_height()
-        )
+        canvas_width, canvas_height = self.canvas.winfo_width(), self.canvas.winfo_height()
+        if canvas_width < 2 or canvas_height < 2:
+            raise ROIValidationError("绘图层尚未完成布局，请稍后再绘制。")
         # Desktop origin locates the overlay; it is not a gaze-frame offset.
         mapping = CanvasMapping.from_sizes(
             max(int(canvas_width), 2),
@@ -542,6 +570,11 @@ class ROIApp:
             constrain_circle=self.mode == "circle",
         )
         return mapping, self.mode, geometry
+
+    def _canvas_resized(self, event):
+        self._active_canvas_size = (event.width, event.height)
+        if self._canvas_bounds is not None:
+            self._render_current_shape()
 
     def _render_current_shape(self):
         if self._canvas_bounds is None or self.current_shape_id is None:
@@ -709,22 +742,26 @@ class ROIApp:
                 parent=self.root,
             )
             return
-        name = simpledialog.askstring("文件名", "请输入保存文件名：", parent=self.root)
-        if name is None:
-            return
-        filename = self._normalise_filename(name)
-        if filename is None:
-            messagebox.showerror("文件名无效", "请输入不含路径分隔符的文件名（可选 .xlsx 扩展名）。", parent=self.root)
-            return
-
-        if len(sys.argv) > 1:
-            main_path = Path(sys.argv[1])
+        if len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
+            name = simpledialog.askstring("文件名", "请输入保存文件名：", parent=self.root)
+            if name is None:
+                return
+            filename = self._normalise_filename(name)
+            if filename is None:
+                messagebox.showerror("文件名无效", "请输入有效的 .xlsx 文件名。", parent=self.root)
+                return
+            save_path = Path(sys.argv[1]) / "ROIdata" / filename
         else:
-            main_path = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path.cwd()
-        save_dir = main_path / "ROIdata"
+            destination = filedialog.asksaveasfilename(parent=self.root, title="导出 ROI 工作簿（不覆盖已有文件）",
+                initialfile="ROI.xlsx", defaultextension=".xlsx", filetypes=(("Excel 工作簿", "*.xlsx"),),
+                confirmoverwrite=False)
+            if not destination:
+                return
+            save_path = Path(destination)
+            if save_path.suffix.lower() != ".xlsx":
+                messagebox.showerror("文件名无效", "请选择 .xlsx 文件。", parent=self.root)
+                return
         try:
-            save_dir.mkdir(parents=True, exist_ok=True)
-            save_path = save_dir / filename
             first_rows, metadata_rows = serialize_roi_workbook(self.roi_list)
             self._write_workbook_exclusive(save_path, first_rows, metadata_rows)
         except FileExistsError:

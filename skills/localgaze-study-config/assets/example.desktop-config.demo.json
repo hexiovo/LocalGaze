@@ -1,0 +1,35 @@
+{
+  "schema": "localgaze.desktop-config",
+  "version": 1,
+  "session": {"session_id": "DEMO_ONLY_001", "output_root": "outputs/DEMO_ONLY_DO_NOT_RUN"},
+  "capture": {
+    "snapshot_path": "", "context_path": "", "model_path": "", "correction_path": "",
+    "use_correction_for_capture": false, "motion_monitor_enabled": true, "save_motion_keyframes": true,
+    "target_x_px": "", "target_y_px": "", "calibration_estimator": "ridge",
+    "calibration_formula": "eyetrax-compact-eye-head-v2", "table_format": "csv"
+  },
+  "preprocessing": {
+    "source_path": "", "mapping_table_path": "", "time_unit": "seconds",
+    "parameters": {
+      "blink_padding_s": 0.05, "max_time_gap_s": null, "smooth_window_s": 0.06,
+      "smooth_max_points": 5, "quality_window_s": 0.5, "quality_step_s": 0.1,
+      "missing_ratio_threshold": 0.5
+    }
+  },
+  "roi": {"path": ""},
+  "analysis": {
+    "source_path": "", "selected_files": [], "recursive": false, "time_unit": "auto", "table_format": "csv",
+    "metrics": {
+      "trajectory": true, "fixation": false, "fast_movement": false, "ivt_saccade": false,
+      "blink": false, "roi": false, "iris_proxy": false, "entropy": false, "calibration": false
+    },
+    "parameters": {
+      "max_time_gap_s": null, "gap_median_multiplier": 3.0,
+      "fixation_min_samples": 3, "fixation_min_duration_s": 0.12,
+      "fixation_dispersion_diagonal_ratio": 0.03, "fast_speed_diagonals_s": 1.0,
+      "ivt_speed_diagonals_s": 1.0, "ivt_min_duration_s": 0.02, "ivt_max_duration_s": 0.2,
+      "ivt_min_samples": 3, "blink_min_duration_s": 0.05, "blink_max_duration_s": 0.5,
+      "entropy_grid": [32, 18]
+    }
+  }
+}

@@ -1,14 +1,14 @@
 ﻿param(
     [string]$PythonExe = '',
     [string]$ArtifactsRoot = '',
-    [string]$ReleaseName = 'LocalGaze-2026.10.16.0',
+    [string]$ReleaseName = 'LocalGaze-2026.10.31.0',
     [string]$DeliveryRoot = '',
     [switch]$SkipArchive
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 if ([string]::IsNullOrWhiteSpace($ArtifactsRoot)) {
-    $ArtifactsRoot = Join-Path $projectRoot 'build-artifacts\windows-2026.10.16.0'
+    $ArtifactsRoot = Join-Path $projectRoot 'build-artifacts\windows-2026.10.31.0'
 }
 if ([string]::IsNullOrWhiteSpace($PythonExe)) {
     $PythonExe = Join-Path $projectRoot '.venv\Scripts\python.exe'
@@ -86,12 +86,15 @@ if ($unicodeResult.status -ne 'passed') { throw 'Unicode windowed check did not 
 New-Item -ItemType Directory -Path $releaseRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $builtDir 'LocalGaze.exe'), (Join-Path $builtDir 'LocalGazeWorker.exe'), (Join-Path $builtDir 'ROIDrawing.exe') -Destination $releaseRoot
 Copy-Item -LiteralPath (Join-Path $builtDir '_internal') -Destination $releaseRoot -Recurse
-Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\guide') -Destination $releaseRoot -Recurse
 Copy-Item -LiteralPath (Join-Path $projectRoot 'third_party') -Destination $releaseRoot -Recurse
 New-Item -ItemType Directory -Path (Join-Path $releaseRoot 'docs') | Out-Null
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\LocalGaze产品介绍与使用手册.pdf') -Destination (Join-Path $releaseRoot 'docs')
+Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\快速开始.txt') -Destination (Join-Path $releaseRoot 'docs')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md'), (Join-Path $projectRoot 'version.md') -Destination $releaseRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $releaseRoot
+$attachmentsRoot = Join-Path $artifactDir 'attachments'
+& $PythonExe -B (Join-Path $PSScriptRoot 'package_study_skill.py') --project-root $projectRoot `
+    --portable-docs (Join-Path $releaseRoot 'docs\skills') --attachments-root $attachmentsRoot
+if ($LASTEXITCODE -ne 0) { throw 'Study-config skill package generation failed.' }
 $sourceInventoryPath = Join-Path $artifactDir 'source-inventory.json'
 & $PythonExe -B (Join-Path $PSScriptRoot 'release_manifest.py') $projectRoot $releaseRoot $reportPath $sourceInventoryPath
 if ($LASTEXITCODE -ne 0) { throw 'Release manifest generation failed.' }
@@ -102,7 +105,7 @@ if ($LASTEXITCODE -ne 0) { throw "Portable delivery verification failed: $verifi
 if (-not $SkipArchive) {
     Compress-Archive -LiteralPath $releaseRoot -DestinationPath $zipPath
     $deliveryManifest = Join-Path $artifactDir 'delivery-manifest.json'
-    & $PythonExe -B (Join-Path $PSScriptRoot 'delivery_manifest.py') $releaseRoot $zipPath $deliveryManifest
+    & $PythonExe -B (Join-Path $PSScriptRoot 'delivery_manifest.py') $releaseRoot $zipPath $deliveryManifest --attachments-root $attachmentsRoot
     if ($LASTEXITCODE -ne 0) { throw 'External delivery manifest generation failed.' }
     Write-Output "Archive: $zipPath"
     Write-Output "Delivery manifest: $deliveryManifest"

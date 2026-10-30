@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
@@ -11,9 +12,9 @@ import sys
 
 
 EXCLUDED_SOURCE_PARTS = {
-    ".git", ".venv", "venv", "release", "build", "build-artifacts", "dist",
-    "tmp", "output", "SampleData", ".idea", "__pycache__", ".pytest_cache",
-    ".ruff_cache",
+    ".git", ".venv", "venv", ".build-venv", "release", "build", "build-artifacts", "dist",
+    "tmp", "output", "SampleData", ".idea", "__pycache__", ".pytest_cache", ".ruff_cache",
+    "downloads", "deployment", "portable", "deliverables",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".tmp", ".log"}
 DEPENDENCIES = (
@@ -44,17 +45,27 @@ def safe_relative(path: Path, root: Path) -> str:
     return relative
 
 
+def is_reparse_point(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except OSError:
+        return True
+    return path.is_symlink() or bool(getattr(info, "st_file_attributes", 0) & 0x400)
+
+
 def source_inventory(project: Path) -> dict[str, str]:
     result = {}
-    for path in sorted(project.rglob("*")):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(project)
-        if any(part in EXCLUDED_SOURCE_PARTS for part in relative.parts):
-            continue
-        if path.suffix.lower() in EXCLUDED_SUFFIXES:
-            continue
-        result[relative.as_posix()] = digest(path)
+    for current, directories, files in os.walk(project, topdown=True, followlinks=False):
+        base = Path(current)
+        directories[:] = sorted(
+            name for name in directories
+            if name not in EXCLUDED_SOURCE_PARTS and not is_reparse_point(base / name)
+        )
+        for name in sorted(files):
+            path = base / name
+            if is_reparse_point(path) or path.suffix.lower() in EXCLUDED_SUFFIXES:
+                continue
+            result[path.relative_to(project).as_posix()] = digest(path)
     return result
 
 
@@ -106,10 +117,16 @@ if __name__ == "__main__":
     if method_match is None:
         raise RuntimeError("Cannot read the analysis method version from metrics.py")
     version_info = (project / "build_tools" / "windows" / "version_info.txt").read_text(encoding="utf-8")
+    project_version = parse_version_file(project / "version.md")
+    version_parts = tuple(int(part) for part in project_version.split("."))
+    if len(version_parts) != 4:
+        raise RuntimeError("The Windows program version must have four numeric components")
+    expected_version = ".".join(str(part) for part in version_parts)
     windows_match = re.search(r"StringStruct\('FileVersion',\s*'([^']+)'\)", version_info)
     product_match = re.search(r"StringStruct\('ProductVersion',\s*'([^']+)'\)", version_info)
-    if windows_match is None or product_match is None or windows_match.group(1) != product_match.group(1):
-        raise RuntimeError("Windows file and product versions are missing or inconsistent")
+    if (windows_match is None or product_match is None or windows_match.group(1) != expected_version
+            or product_match.group(1) != expected_version):
+        raise RuntimeError("Windows file/product versions do not match version.md")
 
     source_hashes = source_inventory(project)
     source_doc = {"schema_version": 1, "files_sha256": source_hashes}
@@ -121,7 +138,7 @@ if __name__ == "__main__":
     manifest = {
         "schema_version": 1,
         "release": release.name,
-        "project_version": parse_version_file(project / "version.md"),
+        "project_version": project_version,
         "platform": "windows",
         "architecture": architecture,
         "python_version": ".".join(str(part) for part in sys.version_info[:3]),

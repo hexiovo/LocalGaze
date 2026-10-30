@@ -5,12 +5,17 @@ analysis code are started in an owned worker after an explicit button click.
 """
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
+import queue
+import subprocess
 import sys
+import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable
 
@@ -19,16 +24,20 @@ from EyeEvaluate.Evaluate.analysis_options import ANALYSIS_METRIC_GROUPS, normal
 
 
 _COLORS = {
-    "canvas": "#F4F6F5",
+    "canvas": "#FCF8F2",
     "surface": "#FFFFFF",
-    "ink": "#183333",
-    "muted": "#617373",
-    "line": "#D6E2DE",
-    "teal": "#087F76",
-    "teal_dark": "#06665F",
-    "teal_pale": "#E5F3F0",
-    "orange": "#E88345",
-    "danger": "#B63C3C",
+    "ink": "#27324A",
+    "navy": "#27324A",
+    "navy_light": "#394662",
+    "muted": "#667085",
+    "line": "#D7DCE5",
+    "teal": "#20C46A",
+    "teal_dark": "#13894A",
+    "teal_pale": "#E9FBF1",
+    "orange": "#FFB4AA",
+    "sky": "#E6F7FB",
+    "lavender": "#E6E6FA",
+    "danger": "#A62F3A",
 }
 
 _TIME_UNITS = {
@@ -38,7 +47,8 @@ _TIME_UNITS = {
     "微秒 (microseconds)": "microseconds",
 }
 _PREPROCESS_TIME_UNITS = ("seconds", "milliseconds", "microseconds")
-_USER_MANUAL_FILENAME = "LocalGaze产品介绍与使用手册.pdf"
+_QUICK_START_FILENAME = "快速开始.txt"
+_SKILL_GUIDE_FILENAME = "README.txt"
 _CALIBRATION_ESTIMATORS = {
     "Ridge（默认）": "ridge",
     "Elastic Net": "elastic_net",
@@ -68,12 +78,27 @@ class DesktopApp:
         self._active_job_id: str | None = None
         self._active_job_kind: str | None = None
         self._closing = False
+        self._dependency_process: subprocess.Popen[str] | None = None
+        self._dependency_events: queue.Queue[tuple[str, str | int]] = queue.Queue()
+        self._dependency_install_active = False
+        self._dependency_cancel_requested = False
+        self._environment_dialog: tk.Toplevel | None = None
+        self._environment_refresh: Callable[[], None] | None = None
+        self._environment_install_button: ttk.Button | None = None
+        self._environment_install_status = tk.StringVar(root, "")
+        self._configuration_path: Path | None = None
         self._auto_poll = auto_poll
         self._poll_after_id = None
         self._input_controls: list[tk.Widget] = []
         self._action_controls: list[tk.Widget] = []
         self._primary_actions: dict[str, tk.Widget] = {}
         self._browse_controls: list[tk.Widget] = []
+        self._page_ids: list[str] = []
+        self._page_buttons: list[ttk.Button] = []
+        self._advanced_sections: list[tuple[ttk.Frame, ttk.Button]] = []
+        self._capture_action_buttons: tuple[ttk.Button, ...] = ()
+        self._capture_actions_stacked: bool | None = None
+        self._active_page_index = 0
         self._busy = False
         self._last_success_outputs: dict[str, Path] = {}
         self._last_success_job_id: str | None = None
@@ -103,6 +128,12 @@ class DesktopApp:
         self.output_root = tk.StringVar(root, "")
         self.roi_path = tk.StringVar(root, "")
         self.preprocess_time_unit = tk.StringVar(root, "seconds")
+        from desktop_configuration import PREPROCESS_PARAMETER_DEFAULTS
+
+        self.preprocess_config_vars = {
+            name: tk.StringVar(root, value=value)
+            for name, value in PREPROCESS_PARAMETER_DEFAULTS.items()
+        }
         self.analysis_time_unit_label = tk.StringVar(root, "自动识别")
         self.analysis_table_format_label = tk.StringVar(root, "CSV（逗号分隔）")
         self.capture_table_format_label = tk.StringVar(root, "CSV（逗号分隔）")
@@ -149,11 +180,8 @@ class DesktopApp:
             self.root.iconbitmap(default=str(icon_path))
         self.root.configure(background=_COLORS["canvas"])
         self.root.minsize(780, 570)
-        self.root.geometry("1080x760")
-        try:
-            self.root.option_add("*Font", ("Microsoft YaHei UI", 10))
-        except tk.TclError:
-            pass
+        initial_height = min(900, max(570, self.root.winfo_screenheight() - 40))
+        self.root.geometry(f"1320x{initial_height}")
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -161,72 +189,164 @@ class DesktopApp:
             style.theme_use("clam")
         except tk.TclError:
             pass
+        body_font = ("Microsoft YaHei UI", -20)
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
+            tkfont.nametofont(name, root=self.root).configure(family=body_font[0], size=body_font[1])
+        self.root.option_add("*TCombobox*Listbox.font", body_font)
+        style.configure(".", font=body_font)
         style.configure("TFrame", background=_COLORS["canvas"])
-        style.configure("Card.TFrame", background=_COLORS["surface"], relief="flat")
-        style.configure("TLabel", background=_COLORS["canvas"], foreground=_COLORS["ink"])
-        style.configure("Card.TLabel", background=_COLORS["surface"], foreground=_COLORS["ink"])
-        style.configure("Muted.TLabel", background=_COLORS["surface"], foreground=_COLORS["muted"])
-        style.configure("Header.TLabel", background=_COLORS["canvas"], foreground=_COLORS["ink"], font=("Microsoft YaHei UI", 19, "bold"))
-        style.configure("Eyebrow.TLabel", background=_COLORS["canvas"], foreground=_COLORS["teal"], font=("Microsoft YaHei UI", 9, "bold"))
-        style.configure("Status.TLabel", background=_COLORS["teal_pale"], foreground=_COLORS["teal_dark"], padding=(11, 6))
-        style.configure("Section.TLabel", background=_COLORS["surface"], foreground=_COLORS["ink"], font=("Microsoft YaHei UI", 12, "bold"))
+        style.configure("App.TFrame", background=_COLORS["canvas"])
+        style.configure("Card.TFrame", background=_COLORS["surface"], relief="flat", borderwidth=0)
+        style.configure("OuterCard.TFrame", background=_COLORS["surface"], relief="solid", borderwidth=1)
+        style.configure("NavRail.TFrame", background=_COLORS["navy"])
+        style.configure("NavDivider.TFrame", background=_COLORS["navy_light"])
+        style.configure("PageHeader.TFrame", background=_COLORS["sky"], relief="solid", borderwidth=1)
+        style.configure("TButton", font=body_font)
+        style.configure("TCheckbutton", background=_COLORS["surface"], font=body_font)
+        style.configure("TLabel", background=_COLORS["canvas"], foreground=_COLORS["ink"], font=body_font)
+        style.configure("Card.TLabel", background=_COLORS["surface"], foreground=_COLORS["ink"], font=body_font)
+        style.configure("Muted.TLabel", background=_COLORS["surface"], foreground=_COLORS["muted"], font=("Microsoft YaHei UI", -17))
+        style.configure("Header.TLabel", background=_COLORS["canvas"], foreground=_COLORS["ink"], font=("Microsoft YaHei UI", -24, "bold"))
+        style.configure("Eyebrow.TLabel", background=_COLORS["canvas"], foreground=_COLORS["teal_dark"], font=("Microsoft YaHei UI", -17, "bold"))
+        style.configure("Brand.TLabel", background=_COLORS["navy"], foreground="#FFFFFF", font=("Microsoft YaHei UI", -24, "bold"))
+        style.configure("RailHint.TLabel", background=_COLORS["navy"], foreground="#D4DAE5", font=("Microsoft YaHei UI", -18))
+        style.configure("PageNumber.TLabel", background=_COLORS["teal"], foreground=_COLORS["navy"], padding=(9, 5), font=("Microsoft YaHei UI", -18, "bold"))
+        style.configure("PageTitle.TLabel", background=_COLORS["sky"], foreground=_COLORS["ink"], font=("Microsoft YaHei UI", -30, "bold"))
+        style.configure("PageHint.TLabel", background=_COLORS["sky"], foreground=_COLORS["muted"], font=("Microsoft YaHei UI", -17))
+        style.configure("Status.TLabel", background=_COLORS["navy"], foreground="#FFFFFF", padding=(11, 7), font=("Microsoft YaHei UI", -18, "bold"))
+        style.configure("Section.TLabel", background=_COLORS["surface"], foreground=_COLORS["ink"], font=("Microsoft YaHei UI", -24, "bold"))
         style.configure("TNotebook", background=_COLORS["canvas"], borderwidth=0)
-        style.configure("TNotebook.Tab", background="#E7EEEB", foreground=_COLORS["muted"], padding=(15, 9), borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", _COLORS["surface"])], foreground=[("selected", _COLORS["teal_dark"])])
-        style.configure("TEntry", padding=(7, 6), fieldbackground="#FBFCFC")
-        style.configure("TCombobox", padding=(7, 5), fieldbackground="#FBFCFC")
-        style.configure("Primary.TButton", background=_COLORS["teal"], foreground="#FFFFFF", padding=(14, 9), borderwidth=0, font=("Microsoft YaHei UI", 10, "bold"))
-        style.map("Primary.TButton", background=[("active", _COLORS["teal_dark"]), ("disabled", "#A9C4BF")], foreground=[("disabled", "#F4F7F6")])
-        style.configure("StartAction.TButton", background=_COLORS["teal_dark"], foreground="#FFFFFF", padding=(17, 13), borderwidth=0, font=("Microsoft YaHei UI", 11, "bold"))
-        style.map("StartAction.TButton", background=[("active", "#04554F"), ("disabled", "#A9C4BF")], foreground=[("disabled", "#F4F7F6")])
-        style.configure("CalibrationAction.TButton", background=_COLORS["orange"], foreground=_COLORS["ink"], padding=(17, 13), borderwidth=0, font=("Microsoft YaHei UI", 11, "bold"))
-        style.map("CalibrationAction.TButton", background=[("active", "#D97032"), ("disabled", "#E3C0AD")], foreground=[("disabled", "#6D5C53")])
-        style.configure("Secondary.TButton", background=_COLORS["teal_pale"], foreground=_COLORS["teal_dark"], padding=(12, 8), borderwidth=0)
-        style.map("Secondary.TButton", background=[("active", "#D4EBE6"), ("disabled", "#EDF3F1")])
-        style.configure("Quiet.TButton", background=_COLORS["surface"], foreground=_COLORS["muted"], padding=(10, 7), borderwidth=1)
-        style.configure("Danger.TButton", background="#FBEDEC", foreground=_COLORS["danger"], padding=(11, 7), borderwidth=0)
+        style.layout("Hidden.TNotebook", [("Notebook.client", {"sticky": "nswe"})])
+        style.layout("Hidden.TNotebook.Tab", [])
+        style.configure("Hidden.TNotebook", background=_COLORS["canvas"], borderwidth=0, tabmargins=0)
+        style.configure("TEntry", padding=(6, 5), fieldbackground="#FFFFFF", font=body_font)
+        style.configure("TCombobox", padding=(6, 5), fieldbackground="#FFFFFF", font=body_font)
+        style.configure("Primary.TButton", background=_COLORS["teal"], foreground=_COLORS["navy"], padding=(14, 9), borderwidth=2, relief="raised", font=("Microsoft YaHei UI", -20, "bold"))
+        style.map("Primary.TButton", background=[("pressed", _COLORS["teal_dark"]), ("active", "#59D68F"), ("disabled", "#CAD8CE")], foreground=[("disabled", "#68736D")])
+        style.configure("StartAction.TButton", background=_COLORS["teal"], foreground=_COLORS["navy"], padding=(15, 11), borderwidth=2, relief="raised", font=("Microsoft YaHei UI", -20, "bold"))
+        style.map("StartAction.TButton", background=[("pressed", _COLORS["teal_dark"]), ("active", "#59D68F"), ("disabled", "#CAD8CE")], foreground=[("disabled", "#68736D")])
+        style.configure("CalibrationAction.TButton", background=_COLORS["orange"], foreground=_COLORS["ink"], padding=(13, 11), borderwidth=2, relief="raised", font=("Microsoft YaHei UI", -20, "bold"))
+        style.map("CalibrationAction.TButton", background=[("pressed", "#F18F83"), ("active", "#FFD0C9"), ("disabled", "#E7D7D4")], foreground=[("disabled", "#766D6B")])
+        style.configure("Secondary.TButton", background=_COLORS["teal_pale"], foreground=_COLORS["teal_dark"], padding=(11, 7), borderwidth=1, relief="solid")
+        style.map("Secondary.TButton", background=[("active", "#D2F2DE"), ("disabled", "#EDF3EF")])
+        style.configure("Quiet.TButton", background=_COLORS["surface"], foreground=_COLORS["muted"], padding=(9, 6), borderwidth=1, relief="solid")
+        style.configure("Danger.TButton", background="#FBEDEC", foreground=_COLORS["danger"], padding=(10, 6), borderwidth=1, relief="solid")
+        style.configure("Nav.TButton", background=_COLORS["navy"], foreground="#E9EDF4", padding=(9, 6), anchor="w", borderwidth=1, relief="flat", font=("Microsoft YaHei UI", -18, "bold"))
+        style.map("Nav.TButton", background=[("active", _COLORS["navy_light"]), ("disabled", _COLORS["navy"])], foreground=[("disabled", "#98A2B3")])
+        style.configure("NavActive.TButton", background=_COLORS["navy_light"], foreground="#FFFFFF", padding=(9, 6), anchor="w", borderwidth=2, relief="raised", font=("Microsoft YaHei UI", -18, "bold"))
+        style.map("NavActive.TButton", background=[("active", "#465573"), ("disabled", _COLORS["navy_light"])], foreground=[("disabled", "#D4DAE5")])
+        style.configure("RailQuiet.TButton", background=_COLORS["navy"], foreground="#D4DAE5", padding=(8, 3), anchor="w", borderwidth=1, relief="flat", font=("Microsoft YaHei UI", -18))
+        style.map("RailQuiet.TButton", background=[("active", _COLORS["navy_light"])], foreground=[("active", "#FFFFFF")])
 
     def _build_view(self) -> None:
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
-        self.root.rowconfigure(2, weight=0, minsize=42)
+        self.root.rowconfigure(0, weight=1)
 
-        header = ttk.Frame(self.root, padding=(24, 19, 24, 12))
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        header.columnconfigure(1, weight=0)
-        header.columnconfigure(2, weight=0)
-        ttk.Label(header, text="LOCALGAZE  /  DESKTOP", style="Eyebrow.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="眼动实验工作台", style="Header.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
-        ttk.Label(
-            header,
-            textvariable=self.capture_quality_text,
-            style="Muted.TLabel",
-            wraplength=760,
-            justify="left",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(7, 0))
-        self.status_label = ttk.Label(header, textvariable=self.status_text, style="Status.TLabel")
-        self.status_label.grid(row=0, column=1, sticky="e", padx=(14, 0))
-        self.manual_button = ttk.Button(
-            header, text="产品介绍与使用手册", style="Secondary.TButton",
-            command=self._open_user_manual,
-        )
-        self.manual_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
-        self.guide_button = ttk.Button(
-            header, text="查看整体指南", style="Secondary.TButton", command=self._show_guide
-        )
-        self.guide_button.grid(row=1, column=1, sticky="e", padx=(14, 0), pady=(5, 0))
-        self.environment_button = ttk.Button(
-            header, text="环境检查", style="Quiet.TButton", command=self.show_environment_check
-        )
-        self.environment_button.grid(row=1, column=2, sticky="e", padx=(8, 0), pady=(5, 0))
+        workspace = ttk.Frame(self.root, style="App.TFrame")
+        workspace.grid(row=0, column=0, sticky="nsew")
+        workspace.columnconfigure(0, weight=0, minsize=232)
+        workspace.columnconfigure(1, weight=1)
+        workspace.rowconfigure(0, weight=1)
 
-        main = ttk.Frame(self.root, padding=(18, 0, 18, 0))
-        main.grid(row=1, column=0, sticky="nsew")
+        rail = ttk.Frame(workspace, style="NavRail.TFrame", padding=(12, 12, 12, 8), width=232)
+        rail.grid(row=0, column=0, sticky="nsw")
+        rail.grid_propagate(False)
+        rail.columnconfigure(0, weight=1)
+        rail.rowconfigure(10, weight=1)
+        ttk.Label(rail, text="LOCALGAZE", style="Brand.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(rail, text="眼动实验工作台", style="RailHint.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 10))
+        divider = ttk.Frame(rail, style="NavDivider.TFrame", height=1)
+        divider.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(rail, text="工作步骤", style="RailHint.TLabel").grid(row=3, column=0, sticky="w", pady=(0, 5))
+
+        self._page_info = (
+            ("01", "会话与采集", "设置本次会话，然后校准、采集或检查采集结果。"),
+            ("02", "ROI 绘制", "在目标显示器上标注感兴趣区域，并保存到 ROI 工作簿。"),
+            ("03", "预处理 QC", "选择眼动数据，执行预处理并查看质量检查结果。"),
+            ("04", "分析导出", "选择指标与 ROI，运行分析并导出结果表格。"),
+            ("05", "使用指南", "查看快速开始、实验设计资料和环境检查。"),
+        )
+        self._page_buttons.clear()
+        for index, (number, title, _hint) in enumerate(self._page_info):
+            button = ttk.Button(
+                rail,
+                text=f"{number}   {title}",
+                style="Nav.TButton",
+                takefocus=True,
+                command=lambda target=index: self._select_page(target),
+            )
+            button.grid(row=5 + index, column=0, sticky="ew", pady=(0, 3))
+            button.bind("<Up>", lambda event, target=index: self._focus_adjacent_page(target, -1), add="+")
+            button.bind("<Down>", lambda event, target=index: self._focus_adjacent_page(target, 1), add="+")
+            button.bind("<Return>", lambda _event, target=index: self._select_page(target), add="+")
+            self._page_buttons.append(button)
+
+        rail_tools = ttk.Frame(rail, style="NavRail.TFrame")
+        rail_tools.grid(row=11, column=0, sticky="sew")
+        rail_tools.columnconfigure(0, weight=1)
+        ttk.Frame(rail_tools, style="NavDivider.TFrame", height=1).grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        rail_help_label = ttk.Label(rail_tools, text="帮助与环境", style="RailHint.TLabel")
+        rail_help_label.grid(row=1, column=0, sticky="w", pady=(0, 4))
+        self.guide_button = ttk.Button(rail_tools, text="查看使用指南", style="RailQuiet.TButton", command=self._show_guide)
+        self.guide_button.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        self.materials_button = ttk.Button(rail_tools, text="实验设计资料", style="RailQuiet.TButton", command=self._open_study_materials)
+        self.materials_button.grid(row=3, column=0, sticky="ew", pady=(0, 4))
+        self.environment_button = ttk.Button(rail_tools, text="环境检查", style="RailQuiet.TButton", command=self.show_environment_check)
+        self.environment_button.grid(row=4, column=0, sticky="ew")
+        self._action_controls.append(self.environment_button)
+
+        def fit_rail(event: tk.Event) -> None:
+            # The guide remains available as page 05 when vertical space is tight.
+            if event.height < 600:
+                rail_help_label.grid_remove()
+                self.guide_button.grid_remove()
+            else:
+                rail_help_label.grid()
+                self.guide_button.grid()
+
+        rail.bind("<Configure>", fit_rail, add="+")
+
+        main = ttk.Frame(workspace, style="App.TFrame", padding=(16, 15, 16, 7))
+        main.grid(row=0, column=1, sticky="nsew")
         main.columnconfigure(0, weight=1)
-        main.rowconfigure(0, weight=1)
-        self.notebook = ttk.Notebook(main)
-        self.notebook.grid(row=0, column=0, sticky="nsew")
+        main.rowconfigure(2, weight=1)
+
+        page_header = ttk.Frame(main, style="PageHeader.TFrame", padding=(14, 11, 14, 11))
+        page_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        page_header.columnconfigure(1, weight=1)
+        self.page_number_label = ttk.Label(page_header, text="01", style="PageNumber.TLabel")
+        self.page_number_label.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+        self.page_title_label = ttk.Label(page_header, text="会话与采集", style="PageTitle.TLabel")
+        self.page_title_label.grid(row=0, column=1, sticky="w")
+        self.page_hint_label = ttk.Label(page_header, text="", style="PageHint.TLabel", justify="left")
+        self.page_hint_label.grid(row=1, column=1, sticky="ew", pady=(2, 0))
+        self._wrap_to_width(self.page_hint_label, page_header, inset=160, minimum=200)
+
+        config_bar = ttk.Frame(main, style="Card.TFrame", padding=(12, 7))
+        config_bar.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        config_bar.columnconfigure(1, weight=1)
+        self.configuration_title_label = ttk.Label(config_bar, text="本地自定义配置", style="Card.TLabel")
+        self.configuration_title_label.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.configuration_status_text = tk.StringVar(self.root, "未载入配置")
+        self.configuration_status_label = ttk.Label(
+            config_bar, textvariable=self.configuration_status_text, style="Muted.TLabel", justify="left"
+        )
+        self.configuration_status_label.grid(row=0, column=1, sticky="ew")
+        self.configuration_status_label.bind(
+            "<Configure>",
+            lambda event: self.configuration_status_label.configure(wraplength=max(180, event.width - 8)),
+            add="+",
+        )
+        self.load_configuration_button = ttk.Button(config_bar, text="加载配置…", style="Secondary.TButton", command=self.load_local_configuration)
+        self.load_configuration_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
+        self.save_configuration_button = ttk.Button(config_bar, text="保存配置…", style="Secondary.TButton", command=self.save_local_configuration)
+        self.save_configuration_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
+        self._configuration_toolbar_compact: bool | None = None
+        config_bar.bind("<Configure>", self._layout_configuration_toolbar, add="+")
+        self._action_controls.extend((self.load_configuration_button, self.save_configuration_button))
+
+        self.notebook = ttk.Notebook(main, style="Hidden.TNotebook")
+        self.notebook.grid(row=2, column=0, sticky="nsew")
 
         self._build_session_tab()
         self._build_roi_tab()
@@ -234,8 +354,37 @@ class DesktopApp:
         self._build_analysis_tab()
         self._build_guide_tab()
         self.notebook.bind("<<NotebookTabChanged>>", self._update_tab_state, add="+")
+        for index, key in enumerate(("<Alt-Key-1>", "<Alt-Key-2>", "<Alt-Key-3>", "<Alt-Key-4>", "<Alt-Key-5>")):
+            self.root.bind(key, lambda _event, target=index: self._select_page(target), add="+")
+        self._update_tab_state()
 
         self._build_log_panel()
+
+    def _layout_configuration_toolbar(self, event: tk.Event) -> None:
+        compact = event.width < 860
+        if compact == self._configuration_toolbar_compact:
+            return
+        if compact:
+            self.configuration_title_label.grid_remove()
+            self.configuration_status_label.grid_configure(row=0, column=0, columnspan=4, sticky="ew")
+            self.load_configuration_button.grid_configure(row=1, column=0, sticky="w", padx=(0, 8), pady=(5, 0))
+            self.save_configuration_button.grid_configure(row=1, column=1, sticky="w", padx=(0, 0), pady=(5, 0))
+        else:
+            self.configuration_title_label.grid(row=0, column=0, sticky="w", padx=(0, 12))
+            self.configuration_status_label.grid_configure(row=0, column=1, columnspan=1, sticky="ew")
+            self.load_configuration_button.grid_configure(row=0, column=2, sticky="e", padx=(8, 0), pady=(0, 0))
+            self.save_configuration_button.grid_configure(row=0, column=3, sticky="e", padx=(8, 0), pady=(0, 0))
+        self._configuration_toolbar_compact = compact
+
+    def _select_page(self, index: int) -> None:
+        if 0 <= index < len(self._page_ids):
+            self.notebook.select(self._page_ids[index])
+            self._update_tab_state()
+
+    def _focus_adjacent_page(self, index: int, direction: int) -> str:
+        target = (index + direction) % len(self._page_buttons)
+        self._page_buttons[target].focus_set()
+        return "break"
 
     def _new_tab(self, title: str) -> ttk.Frame:
         page = ttk.Frame(self.notebook)
@@ -250,6 +399,7 @@ class DesktopApp:
         content.columnconfigure(0, weight=1)
         window = canvas.create_window((0, 0), window=content, anchor="nw")
         self._scroll_pages.append((page, canvas, content))
+        self._page_ids.append(str(page))
         content.bind("<Configure>", lambda _event, target=canvas: self._queue_scrollregion_refresh(target), add="+")
         canvas.bind(
             "<Configure>",
@@ -346,7 +496,7 @@ class DesktopApp:
         self._wheel_binding_ids.clear()
 
     def _card(self, parent: ttk.Frame, row: int, title: str, subtitle: str | None = None) -> ttk.Frame:
-        card = ttk.Frame(parent, style="Card.TFrame", padding=(18, 16, 18, 17))
+        card = ttk.Frame(parent, style="OuterCard.TFrame", padding=(18, 16, 18, 17))
         card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
         card.columnconfigure(1, weight=1)
         ttk.Label(card, text=title, style="Section.TLabel").grid(row=0, column=0, columnspan=4, sticky="w")
@@ -375,6 +525,7 @@ class DesktopApp:
         panel.grid(row=row + 1, column=0, columnspan=4, sticky="ew", pady=(2, 0))
         panel.grid_remove()
         button.configure(command=lambda: self._toggle_advanced(panel, button, title))
+        self._advanced_sections.append((panel, button))
         return panel
 
     @staticmethod
@@ -389,12 +540,11 @@ class DesktopApp:
     def _build_session_tab(self) -> None:
         page = self._new_tab("会话与采集")
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(2, weight=1)
-        card = self._card(page, 0, "本次会话", "为校准和采集设置会话、模型与输出位置；预处理和分析的数据文件请在各自页面选择。")
-        self._entry_row(card, 2, "会话 ID", self.session_id, browse=None, hint="例如：P001_session1")
-        self._entry_row(card, 3, "输出位置", self.output_root, browse="directory")
-        self._entry_row(card, 4, "模型路径", self.model_path, browse="model", hint="采集使用 .pkl；预处理使用模型工作簿或文件夹")
-        advanced = self._advanced_section(card, 5, "校准、目标与修正参数")
+        settings = self._card(page, 0, "本次会话", "先设置会话 ID、输出位置和模型；例如 P001_session1。模型用于采集或关联预处理质量检查。")
+        self._compact_entry_row(settings, 2, "会话 ID", self.session_id, browse=None)
+        self._compact_entry_row(settings, 3, "输出位置", self.output_root, browse="directory")
+        self._compact_entry_row(settings, 4, "模型路径", self.model_path, browse="model")
+        advanced = self._advanced_section(settings, 5, "校准、目标与修正参数")
         ttk.Label(advanced, text="校准估计器", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(8, 0))
         estimator_box = ttk.Combobox(
             advanced,
@@ -425,47 +575,15 @@ class DesktopApp:
         )
         use_correction.grid(row=3, column=1, columnspan=3, sticky="w", padx=(12, 0), pady=(8, 0))
         self._input_controls.append(use_correction)
-        actions = self._card(page, 1, "采集操作", "只有点击下方按钮后才会启动相机采集流程。运行期间可以取消任务。")
-        motion_option = ttk.Checkbutton(
-            actions,
-            text="正式采集中监测头部与上身运动",
-            variable=self.motion_monitor_enabled,
-        )
-        motion_option.grid(row=2, column=0, columnspan=4, sticky="w", padx=(12, 0), pady=(5, 0))
-        keyframe_option = ttk.Checkbutton(
-            actions,
-            text="保存事件关键帧截图（每个事件最多三张）",
-            variable=self.save_motion_keyframes,
-        )
-        keyframe_option.grid(row=3, column=0, columnspan=4, sticky="w", padx=(12, 0), pady=(4, 0))
-        self._input_controls.extend((motion_option, keyframe_option))
-        action_hint = ttk.Label(
-            actions,
-            text="推荐顺序：先校准并保存模型，再用对应模型开始采集。",
-            style="Muted.TLabel",
-        )
-        action_hint.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        ttk.Label(actions, text="采集表格格式", style="Card.TLabel").grid(
-            row=4, column=2, sticky="e", padx=(8, 4), pady=(8, 0)
-        )
-        capture_format_box = ttk.Combobox(
-            actions,
-            textvariable=self.capture_table_format_label,
-            values=("CSV（逗号分隔）", "TXT（制表符分隔）"),
-            state="readonly",
-            width=19,
-        )
-        capture_format_box.grid(row=4, column=3, sticky="ew", padx=(4, 0), pady=(8, 0))
-        self._input_controls.append(capture_format_box)
+        actions = self._card(page, 1, "开始操作", "选择要执行的工作。只有点击采集或校准按钮后才会启动相机；任务运行期间可以取消。")
         action_row = ttk.Frame(actions, style="Card.TFrame")
-        action_row.grid(row=5, column=0, columnspan=4, sticky="ew", pady=(7, 0))
-        action_row.columnconfigure(0, weight=1, uniform="capture-actions")
-        action_row.columnconfigure(1, weight=1, uniform="capture-actions")
-        action_row.columnconfigure(2, weight=1, uniform="capture-actions")
+        action_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(3, 0))
+        for column in range(3):
+            action_row.columnconfigure(column, weight=1, uniform="capture-actions")
         calibrate = ttk.Button(action_row, text="校准并保存模型", style="CalibrationAction.TButton", command=self.start_calibration)
         calibrate.grid(row=0, column=0, sticky="ew", padx=(0, 7))
         capture = ttk.Button(action_row, text="使用已有模型采集", style="StartAction.TButton", command=self.start_capture)
-        capture.grid(row=0, column=1, sticky="ew", padx=(7, 7))
+        capture.grid(row=0, column=1, sticky="ew", padx=7)
         validate = ttk.Button(
             action_row,
             text="锁定模型九点独立验证",
@@ -473,53 +591,109 @@ class DesktopApp:
             command=self.start_independent_validation,
         )
         validate.grid(row=0, column=2, sticky="ew", padx=(7, 0))
+        self._capture_action_buttons = (calibrate, capture, validate)
+        action_row.bind("<Configure>", self._layout_capture_actions, add="+")
         self._action_controls.extend((calibrate, capture, validate))
         self._primary_actions.update(calibrate=calibrate, capture=capture, independent_validation=validate)
+        capture_options = self._advanced_section(actions, 4, "采集选项与表格格式")
+        motion_option = ttk.Checkbutton(
+            capture_options,
+            text="正式采集中监测头部与上身运动",
+            variable=self.motion_monitor_enabled,
+        )
+        motion_option.grid(row=0, column=0, columnspan=4, sticky="w", padx=(12, 0), pady=(5, 0))
+        keyframe_option = ttk.Checkbutton(
+            capture_options,
+            text="保存事件关键帧截图（每个事件最多三张）",
+            variable=self.save_motion_keyframes,
+        )
+        keyframe_option.grid(row=1, column=0, columnspan=4, sticky="w", padx=(12, 0), pady=(4, 0))
+        self._input_controls.extend((motion_option, keyframe_option))
+        ttk.Label(capture_options, text="采集表格格式", style="Card.TLabel").grid(row=2, column=0, sticky="w", padx=(12, 0), pady=(8, 0))
+        capture_format_box = ttk.Combobox(
+            capture_options,
+            textvariable=self.capture_table_format_label,
+            values=("CSV（逗号分隔）", "TXT（制表符分隔）"),
+            state="readonly",
+            width=19,
+        )
+        capture_format_box.grid(row=2, column=1, sticky="w", padx=(12, 0), pady=(8, 0))
+        self._input_controls.append(capture_format_box)
+        action_hint = ttk.Label(actions, text="推荐顺序：先校准并保存模型，再用对应模型开始采集。", style="Muted.TLabel")
+        action_hint.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        self._wrap_to_width(action_hint, actions, inset=36)
+
+        recovery = self._advanced_section(actions, 6, "快照恢复与已知目标修正")
         self._entry_row(
-            actions, 6, "采集快照文件", self.capture_snapshot_path,
+            recovery, 0, "采集快照文件", self.capture_snapshot_path,
             browse="snapshot",
             hint="仅从已保存的 *.capture-snapshot.json 重试 XLSX/manifest 导出，不会启动相机。",
         )
         self.capture_export_retry_button = ttk.Button(
-            actions,
+            recovery,
             text="仅从快照重试导出",
             style="Secondary.TButton",
             command=self.start_capture_export_retry,
             state="disabled",
         )
-        self.capture_export_retry_button.grid(row=7, column=0, sticky="w", pady=(8, 0))
+        self.capture_export_retry_button.grid(row=1, column=0, sticky="w", pady=(8, 0))
         self._action_controls.append(self.capture_export_retry_button)
-        known_target_section = self._advanced_section(actions, 8, "已有修正 / 已知目标修正")
-        ttk.Label(known_target_section, text="在已知屏幕位置显示目标后，采集一次目标样本并保存修正文件。", style="Muted.TLabel", wraplength=560).grid(row=0, column=0, columnspan=4, sticky="w", pady=(8, 0))
-        ttk.Label(known_target_section, text="目标位置（屏幕像素）", style="Card.TLabel").grid(row=1, column=0, sticky="w", pady=(8, 0))
-        target_x = ttk.Entry(known_target_section, textvariable=self.target_x_px, width=12)
-        target_x.grid(row=1, column=1, sticky="w", padx=(12, 8), pady=(8, 0))
-        ttk.Label(known_target_section, text="X", style="Card.TLabel").grid(row=1, column=2, sticky="e", pady=(8, 0))
-        target_y = ttk.Entry(known_target_section, textvariable=self.target_y_px, width=12)
-        target_y.grid(row=1, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
+        ttk.Label(recovery, text="已知目标修正", style="Section.TLabel").grid(row=2, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        ttk.Label(recovery, text="在已知屏幕位置显示目标后，采集一次目标样本并保存修正文件。", style="Muted.TLabel", wraplength=560).grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        ttk.Label(recovery, text="目标位置（屏幕像素）", style="Card.TLabel").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        target_x = ttk.Entry(recovery, textvariable=self.target_x_px, width=12)
+        target_x.grid(row=4, column=1, sticky="w", padx=(12, 8), pady=(8, 0))
+        ttk.Label(recovery, text="X", style="Card.TLabel").grid(row=4, column=2, sticky="e", pady=(8, 0))
+        target_y = ttk.Entry(recovery, textvariable=self.target_y_px, width=12)
+        target_y.grid(row=4, column=3, sticky="w", padx=(8, 0), pady=(8, 0))
         self._input_controls.extend((target_x, target_y))
-        ttk.Label(known_target_section, text="留空时使用屏幕中心。", style="Muted.TLabel").grid(row=2, column=1, columnspan=3, sticky="w", padx=(12, 0), pady=(2, 0))
-        known_target = ttk.Button(known_target_section, text="采集已知目标并生成修正", style="Secondary.TButton", command=self.start_known_target_offset)
-        known_target.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        ttk.Label(recovery, text="留空时使用屏幕中心。", style="Muted.TLabel").grid(row=5, column=1, columnspan=3, sticky="w", padx=(12, 0), pady=(2, 0))
+        known_target = ttk.Button(recovery, text="采集已知目标并生成修正", style="Secondary.TButton", command=self.start_known_target_offset)
+        known_target.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         self._action_controls.append(known_target)
         self._primary_actions["known_target_offset"] = known_target
         self._entry_row(
-            actions, 10, "采集恢复上下文", self.capture_context_path,
+            recovery, 7, "采集恢复上下文", self.capture_context_path,
             browse="capture_context",
             hint="从已保存的采集上下文、原始 TSV 与耐久检查点恢复导出；不会启动相机或校准。",
         )
         self.capture_recovery_button = ttk.Button(
-            actions,
+            recovery,
             text="从上下文恢复采集结果",
             style="Secondary.TButton",
             command=self.start_capture_recovery,
             state="disabled",
         )
-        self.capture_recovery_button.grid(row=11, column=0, sticky="w", pady=(8, 0))
+        self.capture_recovery_button.grid(row=8, column=0, sticky="w", pady=(8, 0))
         self._action_controls.append(self.capture_recovery_button)
-        footer = ttk.Label(page, text="校准和正式采集沿用旧有流程；此工作台负责统一设置会话与输出位置。", style="Muted.TLabel")
+        footer = ttk.Label(page, text="校准和正式采集流程保持不变；本页统一设置会话与输出位置。", style="Muted.TLabel")
         footer.grid(row=2, column=0, sticky="ew", pady=(2, 0))
         self._wrap_to_width(footer, page, inset=8)
+
+    def _layout_capture_actions(self, event: tk.Event | None = None) -> None:
+        action_row = self._capture_action_buttons[0].master if self._capture_action_buttons else None
+        if action_row is None:
+            return
+        width = action_row.winfo_width() if event is None else event.width
+        if width <= 1:
+            return
+        stacked = width < 650
+        if stacked == self._capture_actions_stacked:
+            return
+        for button in self._capture_action_buttons:
+            button.grid_forget()
+        if stacked:
+            for row, button in enumerate(self._capture_action_buttons):
+                button.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(0, 5))
+        else:
+            for column, button in enumerate(self._capture_action_buttons):
+                button.grid(
+                    row=0,
+                    column=column,
+                    sticky="ew",
+                    padx=(0, 7) if column == 0 else (7, 0) if column == 2 else 7,
+                )
+        self._capture_actions_stacked = stacked
 
     def _build_roi_tab(self) -> None:
         page = self._new_tab("ROI 绘制")
@@ -541,8 +715,9 @@ class DesktopApp:
         card = self._card(page, 0, "预处理数据", "模型可选；可直接选择文件/文件夹，也可用 CSV/XLSX 映射表逐行指定数据与模型。原始文件不会被覆盖。")
         self._entry_row(card, 2, "模型文件/文件夹（可选）", self.model_path, browse="model", hint="模型只用于关联同名校准误差工作簿；不预测新坐标。留空时执行无模型 QC。")
         self._entry_row(card, 3, "眼动数据文件/文件夹", self.preprocess_source_path, browse="source", hint="可选单个文件或含多个文件的文件夹")
-        mapping = ttk.Frame(card, style="Card.TFrame")
-        mapping.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        mapping_options = self._advanced_section(card, 4, "映射表与模板")
+        mapping = ttk.Frame(mapping_options, style="Card.TFrame")
+        mapping.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(4, 0))
         mapping.columnconfigure(0, weight=1)
         ttk.Label(mapping, text="映射表（可选）", style="Card.TLabel").grid(row=0, column=0, columnspan=4, sticky="w")
         mapping_entry = ttk.Entry(mapping, textvariable=self.preprocess_mapping_table_path, width=24)
@@ -564,8 +739,8 @@ class DesktopApp:
         )
         mapping_hint.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(3, 0))
         self._wrap_to_width(mapping_hint, mapping, inset=24)
-        template_actions = ttk.Frame(card, style="Card.TFrame")
-        template_actions.grid(row=5, column=0, columnspan=4, sticky="w", pady=(7, 0))
+        template_actions = ttk.Frame(mapping_options, style="Card.TFrame")
+        template_actions.grid(row=3, column=0, columnspan=4, sticky="w", pady=(7, 0))
         preview_button = ttk.Button(template_actions, text="预览模板示例", command=self._preview_mapping_template)
         preview_button.grid(row=0, column=0, sticky="w")
         save_button = ttk.Button(template_actions, text="保存空白模板…", command=self._save_mapping_template)
@@ -583,12 +758,27 @@ class DesktopApp:
         button.grid(row=7, column=0, sticky="w", pady=(13, 0))
         self._action_controls.append(button)
         self._primary_actions["preprocess"] = button
-        advanced = self._advanced_section(card, 8, "时间单位")
-        ttk.Label(advanced, text="数值时间单位（新格式 elapsed_s 为秒）", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(3, 0))
+        advanced = self._advanced_section(card, 8, "时间单位与预处理参数")
+        time_unit_label = ttk.Label(advanced, text="数值时间单位（新格式 elapsed_s 为秒）", style="Card.TLabel", justify="left")
+        time_unit_label.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(3, 0))
         self.preprocess_time_box = ttk.Combobox(advanced, textvariable=self.preprocess_time_unit, values=_PREPROCESS_TIME_UNITS, state="readonly", width=24)
-        self.preprocess_time_box.grid(row=0, column=1, sticky="w", padx=(12, 0), pady=(3, 0))
+        self.preprocess_time_box.grid(row=1, column=0, sticky="w", pady=(5, 0))
         self._input_controls.append(self.preprocess_time_box)
-        ttk.Label(advanced, text="旧格式纯数值时间请按来源单位选择。", style="Muted.TLabel").grid(row=0, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=(3, 0))
+        time_unit_hint = ttk.Label(advanced, text="旧格式纯数值时间请按来源单位选择。", style="Muted.TLabel", justify="left")
+        time_unit_hint.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        self._wrap_to_width(time_unit_label, advanced, inset=12, minimum=180)
+        self._wrap_to_width(time_unit_hint, advanced, inset=12, minimum=180)
+        from desktop_configuration import PREPROCESS_PARAMETER_LABELS
+
+        parameter_grid = ttk.Frame(advanced, style="Card.TFrame")
+        parameter_grid.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        parameter_grid.columnconfigure(0, weight=1)
+        for index, (name, variable) in enumerate(self.preprocess_config_vars.items()):
+            label = ttk.Label(parameter_grid, text=PREPROCESS_PARAMETER_LABELS[name], style="Card.TLabel")
+            label.grid(row=index * 2, column=0, columnspan=4, sticky="w", pady=(4, 2))
+            entry = ttk.Entry(parameter_grid, textvariable=variable, width=13)
+            entry.grid(row=index * 2 + 1, column=0, sticky="w", pady=(0, 5))
+            self._input_controls.append(entry)
         footer = ttk.Label(page, text="输出包含逐文件结果、批次报告及运行清单；映射表坏行会单独记录，其他有效行继续处理。", style="Muted.TLabel")
         footer.grid(row=1, column=0, sticky="ew")
         self._wrap_to_width(footer, page, inset=8)
@@ -637,41 +827,45 @@ class DesktopApp:
         recursive = ttk.Checkbutton(
             source_actions, text="递归读取子文件夹", variable=self.analysis_recursive,
         )
-        recursive.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        recursive.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self._browse_controls.extend((choose_many, choose_folder))
         self._input_controls.append(recursive)
         selection_hint = ttk.Label(source_actions, textvariable=self.analysis_source_selection_text, style="Muted.TLabel")
-        selection_hint.grid(row=0, column=3, sticky="w", padx=(12, 0))
-        self._wrap_to_width(selection_hint, source_actions, inset=24)
+        selection_hint.grid(row=2, column=0, columnspan=4, sticky="ew", padx=(0, 8), pady=(4, 0))
+        self._wrap_to_width(selection_hint, source_actions, inset=12)
         self._entry_row(card, 4, "输出位置", self.output_root, browse="directory")
         self._entry_row(card, 5, "ROI 工作簿（可选）", self.roi_path, browse="roi", hint="留空时不计算 ROI 命中")
 
         output_options = ttk.Frame(card, style="Card.TFrame")
-        output_options.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        output_options.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         ttk.Label(output_options, text="表格格式", style="Card.TLabel").grid(row=0, column=0, sticky="w")
         self.analysis_table_format_box = ttk.Combobox(
             output_options, textvariable=self.analysis_table_format_label,
-            values=("CSV（逗号分隔）", "TXT（制表符分隔）"), state="readonly", width=22,
+            values=("CSV（逗号分隔）", "TXT（制表符分隔）"), state="readonly", width=18,
         )
         self.analysis_table_format_box.grid(row=0, column=1, sticky="w", padx=(12, 12))
         self._input_controls.append(self.analysis_table_format_box)
-        ttk.Label(output_options, text="TXT 使用制表符分隔；运行清单保留在本次结果文件夹。", style="Muted.TLabel").grid(row=0, column=2, sticky="w")
+        output_hint = ttk.Label(output_options, text="TXT 使用制表符分隔；运行清单保留在本次结果文件夹。", style="Muted.TLabel", justify="left")
+        output_hint.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        self._wrap_to_width(output_hint, output_options, inset=12)
 
         metric_frame = ttk.Frame(card, style="Card.TFrame")
-        metric_frame.grid(row=7, column=0, sticky="ew", pady=(8, 0))
+        metric_frame.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        metric_frame.columnconfigure(0, weight=1, uniform="metric-columns")
+        metric_frame.columnconfigure(1, weight=1, uniform="metric-columns")
         ttk.Label(metric_frame, text="计算指标（默认全选）", style="Card.TLabel").grid(row=0, column=0, columnspan=4, sticky="w")
         for index, (group_id, label) in enumerate(ANALYSIS_METRIC_GROUPS):
             check = ttk.Checkbutton(
                 metric_frame, text=label, variable=self.analysis_metric_vars[group_id],
                 command=self._refresh_analysis_parameter_states,
             )
-            check.grid(row=1 + index // 4, column=index % 4, sticky="w", padx=(0, 10), pady=(5, 0))
+            check.grid(row=1 + index // 2, column=index % 2, sticky="w", padx=(0, 10), pady=(5, 0))
             self._input_controls.append(check)
         ttk.Label(
             metric_frame,
             text="数据质量与输入来源说明始终保留；注视、快速移动、I-VT 与闭合候选可分别选择。",
             style="Muted.TLabel",
-        ).grid(row=1 + (len(ANALYSIS_METRIC_GROUPS) + 3) // 4, column=0, columnspan=4, sticky="w", pady=(5, 0))
+        ).grid(row=1 + (len(ANALYSIS_METRIC_GROUPS) + 1) // 2, column=0, columnspan=4, sticky="w", pady=(5, 0))
 
         button = ttk.Button(card, text="分析并导出结果", style="Primary.TButton", command=self.start_analysis)
         button.grid(row=8, column=0, sticky="w", pady=(8, 0))
@@ -679,10 +873,12 @@ class DesktopApp:
         self._primary_actions["analyze"] = button
         advanced = self._advanced_section(card, 9, "时间单位与指标参数")
         ttk.Label(advanced, text="数值时间单位", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(11, 0))
-        self.analysis_time_box = ttk.Combobox(advanced, textvariable=self.analysis_time_unit_label, values=tuple(_TIME_UNITS), state="readonly", width=28)
+        self.analysis_time_box = ttk.Combobox(advanced, textvariable=self.analysis_time_unit_label, values=tuple(_TIME_UNITS), state="readonly", width=24)
         self.analysis_time_box.grid(row=0, column=1, sticky="w", padx=(12, 0), pady=(11, 0))
         self._input_controls.append(self.analysis_time_box)
-        ttk.Label(advanced, text="自动识别会读取文件元数据；有歧义的数值时间请明确选择。", style="Muted.TLabel", wraplength=400).grid(row=0, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=(11, 0))
+        time_hint = ttk.Label(advanced, text="自动识别会读取文件元数据；有歧义的数值时间请明确选择。", style="Muted.TLabel", justify="left")
+        time_hint.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(3, 0))
+        self._wrap_to_width(time_hint, advanced, inset=12)
         parameter_rows = (
             ("max_time_gap_s", "最大有效时间间隔（秒）", "留空按中位间隔倍数" , "timed"),
             ("gap_median_multiplier", "最大间隔中位数倍数", "默认 3.0", "timed_multiplier"),
@@ -699,12 +895,15 @@ class DesktopApp:
             ("entropy_grid_width", "熵网格宽度（格）", "默认 32", "entropy"),
             ("entropy_grid_height", "熵网格高度（格）", "默认 18", "entropy"),
         )
-        for row, (field, label, hint, group) in enumerate(parameter_rows, start=1):
-            ttk.Label(advanced, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=(7, 0))
-            entry = ttk.Entry(advanced, textvariable=self.analysis_config_vars[field], width=16)
+        for index, (field, label, hint, group) in enumerate(parameter_rows):
+            row = 2 + index * 2
+            label_widget = ttk.Label(advanced, text=label, style="Card.TLabel", justify="left", wraplength=280)
+            label_widget.grid(row=row, column=0, sticky="w", pady=(7, 0))
+            entry = ttk.Entry(advanced, textvariable=self.analysis_config_vars[field], width=12)
             entry.grid(row=row, column=1, sticky="w", padx=(12, 8), pady=(7, 0))
-            hint_label = ttk.Label(advanced, text=hint, style="Muted.TLabel")
-            hint_label.grid(row=row, column=2, columnspan=2, sticky="w", padx=(8, 0), pady=(7, 0))
+            hint_label = ttk.Label(advanced, text=hint, style="Muted.TLabel", justify="left")
+            hint_label.grid(row=row + 1, column=0, columnspan=4, sticky="ew", padx=(0, 8), pady=(2, 0))
+            self._wrap_to_width(hint_label, advanced, inset=12)
             self._analysis_parameter_widgets[field] = (group, [entry, hint_label])
             self._input_controls.append(entry)
         self.analysis_config_vars["max_time_gap_s"].trace_add("write", lambda *_: self._refresh_analysis_parameter_states())
@@ -731,9 +930,10 @@ class DesktopApp:
         page = ttk.Frame(self.notebook, padding=(18, 8, 18, 8))
         self.notebook.add(page, text="使用指南")
         self._guide_tab_id = str(page)
+        self._page_ids.append(str(page))
         page.columnconfigure(0, weight=1)
         page.rowconfigure(0, weight=1)
-        card = ttk.Frame(page, style="Card.TFrame", padding=(18, 10, 18, 10))
+        card = ttk.Frame(page, style="OuterCard.TFrame", padding=(18, 10, 18, 10))
         card.grid(row=0, column=0, sticky="nsew")
         card.columnconfigure(0, weight=1)
         card.rowconfigure(2, weight=1)
@@ -742,29 +942,20 @@ class DesktopApp:
         subtitle.grid(row=1, column=0, sticky="ew", pady=(2, 6))
         self._wrap_to_width(subtitle, card, inset=36)
         source_root = Path(__file__).resolve().parent
-        guide_candidates = [source_root / "README.md"]
+        guide_candidates = [source_root / "docs" / _QUICK_START_FILENAME, source_root / "README.md"]
         if getattr(sys, "frozen", False):
             executable_dir = Path(sys.executable).resolve().parent
             runtime_root = Path(getattr(sys, "_MEIPASS", source_root))
-            guide_candidates = [executable_dir / "README.md", runtime_root / "README.md", *guide_candidates]
+            guide_candidates = [executable_dir / "docs" / _QUICK_START_FILENAME,
+                                runtime_root / "docs" / _QUICK_START_FILENAME, *guide_candidates]
         guide_path = next((candidate for candidate in guide_candidates if candidate.is_file()), guide_candidates[0])
-        image_candidates = []
-        if getattr(sys, "frozen", False):
-            runtime_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-            image_candidates.append(runtime_root / "assets" / "guide")
-        image_candidates.append(Path(__file__).resolve().parent / "assets" / "guide")
-        if getattr(sys, "frozen", False):
-            image_candidates.extend((executable_dir / "assets" / "guide", executable_dir / "guide"))
-        self.guide_image_dir = next(
-            (candidate for candidate in image_candidates if candidate.is_dir()),
-            image_candidates[0],
-        )
         self.guide_path = guide_path
-        self.guide_status = tk.StringVar(self.root, "正在读取 README 使用指南…")
+        self.guide_status = tk.StringVar(self.root, "正在读取快速开始…")
         self.guide_text = ScrolledText(
             card,
             height=10,
             wrap="word",
+            font=("Microsoft YaHei UI", 10),
             background=_COLORS["surface"],
             foreground=_COLORS["ink"],
             insertbackground=_COLORS["ink"],
@@ -776,9 +967,6 @@ class DesktopApp:
             pady=8,
         )
         self.guide_text.grid(row=2, column=0, sticky="nsew", pady=(2, 10))
-        self._guide_resize_after = None
-        self._guide_image_width = 0
-        self.guide_text.bind("<Configure>", self._queue_guide_image_resize, add="+")
         self._load_guide_text()
         toolbar = ttk.Frame(card, style="Card.TFrame")
         toolbar.grid(row=3, column=0, sticky="ew")
@@ -788,7 +976,7 @@ class DesktopApp:
         self._wrap_to_width(status, toolbar, inset=150)
         open_button = ttk.Button(
             toolbar,
-            text="打开 README",
+            text="打开快速开始",
             style="Secondary.TButton",
             command=lambda: self._open_guide(guide_path),
         )
@@ -802,14 +990,9 @@ class DesktopApp:
         rows.append(("Python", runtime_status, f"{runtime_kind} {runtime_version}；源码支持 Python 3.10/3.12 x64；解释器：{sys.executable}"))
         rows.append(("Tkinter 桌面界面", "通过", "工作台已启动；不会检测或改变系统显示设置。"))
 
-        for label, module_name in (
-            ("NumPy 数值计算", "numpy"),
-            ("OpenCV 摄像头与图像处理", "cv2"),
-            ("MediaPipe 面部特征", "mediapipe"),
-            ("pandas 数据表", "pandas"),
-            ("openpyxl 工作簿", "openpyxl"),
-            ("scikit-learn 校准模型", "sklearn"),
-        ):
+        from desktop_environment import RUNTIME_DEPENDENCIES
+
+        for label, module_name in RUNTIME_DEPENDENCIES:
             try:
                 available = importlib.util.find_spec(module_name) is not None
             except (ImportError, ModuleNotFoundError, ValueError):
@@ -823,14 +1006,12 @@ class DesktopApp:
 
         guide_ok = self.guide_path.is_file()
         rows.append(("使用指南", "通过" if guide_ok else "缺少", str(self.guide_path)))
-        manual_path = self._user_manual_path()
+        materials_path = self._study_materials_path()
         try:
-            manual_ok = manual_path.is_file() and manual_path.stat().st_size > 0
+            materials_ok = materials_path.is_file() and materials_path.stat().st_size > 0
         except OSError:
-            manual_ok = False
-        rows.append(("产品介绍与使用手册 PDF", "通过" if manual_ok else "缺少", str(manual_path)))
-        image_paths = sorted(self.guide_image_dir.glob("*.png")) if self.guide_image_dir.is_dir() else []
-        rows.append(("指南图片", "通过" if image_paths else "缺少", f"找到 {len(image_paths)} 张 PNG 图片" if image_paths else f"未找到图片目录：{self.guide_image_dir}"))
+            materials_ok = False
+        rows.append(("实验设计资料", "通过" if materials_ok else "缺少", str(materials_path)))
 
         session = self.session_id.get().strip()
         if not session:
@@ -863,13 +1044,67 @@ class DesktopApp:
         rows.append(("摄像头", "未验证", "检查不会打开摄像头；只有用户明确启动采集/校准后才能验证实际设备。"))
         return rows
 
+    def save_local_configuration(self) -> None:
+        if self._busy or self._dependency_install_active or self._closing:
+            return
+        initial_dir = self._configuration_path.parent if self._configuration_path else Path(__file__).resolve().parent
+        selected = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="保存 LocalGaze 本地配置",
+            initialdir=str(initial_dir),
+            initialfile=self._configuration_path.name if self._configuration_path else "LocalGaze-config.json",
+            defaultextension=".json",
+            filetypes=(("LocalGaze 配置（JSON）", "*.json"),),
+        )
+        if not selected:
+            return
+        from desktop_configuration import save_configuration
+
+        path = Path(selected).expanduser()
+        try:
+            save_configuration(path, self)
+        except (OSError, TypeError, ValueError) as exc:
+            messagebox.showerror("无法保存配置", str(exc), parent=self.root)
+            return
+        self._configuration_path = path.resolve()
+        self.configuration_status_text.set(f"已保存：{self._configuration_path.name}")
+        self._append_log(f"已保存本地自定义配置：{self._configuration_path}")
+
+    def load_local_configuration(self) -> None:
+        if self._busy or self._dependency_install_active or self._closing:
+            return
+        initial_dir = self._configuration_path.parent if self._configuration_path else Path(__file__).resolve().parent
+        selected = filedialog.askopenfilename(
+            parent=self.root,
+            title="加载 LocalGaze 本地配置",
+            initialdir=str(initial_dir),
+            filetypes=(("LocalGaze 配置（JSON）", "*.json"),),
+        )
+        if not selected:
+            return
+        from desktop_configuration import load_configuration
+
+        path = Path(selected).expanduser()
+        try:
+            load_configuration(path, self)
+        except (OSError, TypeError, ValueError) as exc:
+            messagebox.showerror("无法加载配置", str(exc), parent=self.root)
+            return
+        self._configuration_path = path.resolve()
+        self.configuration_status_text.set(f"已载入：{self._configuration_path.name}")
+        self._append_log(f"已载入本地自定义配置：{self._configuration_path}；没有启动任何任务。")
+
     def show_environment_check(self) -> None:
+        if self._environment_dialog is not None and self._environment_dialog.winfo_exists():
+            self._environment_dialog.lift()
+            return
         dialog = tk.Toplevel(self.root)
+        self._environment_dialog = dialog
         dialog.title("环境与配置检查")
         dialog.transient(self.root)
         dialog.configure(background=_COLORS["canvas"])
-        dialog.minsize(640, 460)
-        dialog.geometry("900x700")
+        dialog.minsize(740, 520)
+        dialog.geometry("980x740")
         dialog.columnconfigure(0, weight=1)
         dialog.rowconfigure(2, weight=1)
         ttk.Label(dialog, text="环境与配置检查", style="Header.TLabel").grid(
@@ -878,7 +1113,7 @@ class DesktopApp:
         summary = tk.StringVar(dialog)
         overview = ttk.Frame(dialog)
         overview.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 12))
-        totals = ttk.Label(overview, textvariable=summary, font=("Microsoft YaHei UI", 11, "bold"))
+        totals = ttk.Label(overview, textvariable=summary, font=("Microsoft YaHei UI", 13, "bold"))
         totals.pack(anchor="w", fill="x")
         self._wrap_to_width(totals, overview)
         legend = ttk.Frame(overview)
@@ -890,7 +1125,7 @@ class DesktopApp:
         }
         for symbol, color, _, label in appearances.values():
             tk.Label(legend, text=f"{symbol}  {label}", foreground=color,
-                     background=_COLORS["canvas"], font=("Microsoft YaHei UI", 10)).pack(side="left", padx=(0, 20))
+                     background=_COLORS["canvas"], font=("Microsoft YaHei UI", 12)).pack(side="left", padx=(0, 20))
 
         body = ttk.Frame(dialog)
         body.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 10))
@@ -927,6 +1162,10 @@ class DesktopApp:
                 if after_id:
                     self.root.after_cancel(after_id)
                 self._canvas_widths.pop(canvas, None)
+                if self._environment_dialog is dialog:
+                    self._environment_dialog = None
+                    self._environment_refresh = None
+                    self._environment_install_button = None
 
         dialog.bind("<Destroy>", dispose, add="+")
 
@@ -946,28 +1185,152 @@ class DesktopApp:
                 card.columnconfigure(1, weight=1)
                 tk.Label(card, text=symbol, font=("Segoe UI Symbol", 22, "bold"), foreground=color,
                          background=pale, width=2).grid(row=0, column=0, rowspan=2, padx=(12, 14), pady=10)
-                tk.Label(card, text=name, font=("Microsoft YaHei UI", 10, "bold"), foreground=_COLORS["ink"],
+                tk.Label(card, text=name, font=("Microsoft YaHei UI", 13, "bold"), foreground=_COLORS["ink"],
                          background=_COLORS["surface"], anchor="w").grid(row=0, column=1, sticky="ew", pady=(10, 2))
-                tk.Label(card, text=status, font=("Microsoft YaHei UI", 9), foreground=color,
+                tk.Label(card, text=status, font=("Microsoft YaHei UI", 11), foreground=color,
                          background=pale, padx=9, pady=3).grid(row=0, column=2, padx=12, pady=(10, 2), sticky="e")
-                description = tk.Label(card, text=detail, font=("Microsoft YaHei UI", 9), foreground=_COLORS["muted"],
+                description = tk.Label(card, text=detail, font=("Microsoft YaHei UI", 11), foreground=_COLORS["muted"],
                                        background=_COLORS["surface"], anchor="w", justify="left")
                 description.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 12), pady=(0, 10))
                 self._wrap_to_width(description, description, minimum=1)
             canvas.yview_moveto(position)
 
         refresh()
+        self._environment_refresh = refresh
         footer = ttk.Frame(dialog, padding=(18, 0, 18, 14))
         footer.grid(row=3, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)
+        install_command, install_detail = self._dependency_install_target()
+        self._environment_install_status.set(
+            "正在安装项目 requirements.txt 中的依赖…"
+            if self._dependency_install_active else install_detail
+        )
+        install_status = ttk.Label(footer, textvariable=self._environment_install_status, style="Muted.TLabel", justify="left")
+        install_status.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 7))
+        self._wrap_to_width(install_status, footer, minimum=1)
         note = ttk.Label(footer, text="检查不会打开摄像头。", justify="left")
-        note.grid(row=0, column=0, sticky="ew", padx=(0, 12))
+        note.grid(row=1, column=0, sticky="ew", padx=(0, 12))
         self._wrap_to_width(note, note, minimum=1)
-        ttk.Button(footer, text="重新检查", style="Secondary.TButton", command=refresh).grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(footer, text="关闭", style="Primary.TButton", command=dialog.destroy).grid(row=0, column=2)
+        self._environment_install_button = ttk.Button(
+            footer, text="一键安装项目依赖", style="Primary.TButton",
+            command=lambda: self._start_dependency_install(refresh),
+        )
+        self._environment_install_button.grid(row=1, column=1, padx=(0, 8))
+        self._environment_install_button.configure(
+            state="normal" if install_command is not None and not self._dependency_install_active else "disabled"
+        )
+        ttk.Button(footer, text="重新检查", style="Secondary.TButton", command=refresh).grid(row=1, column=2, padx=(0, 8))
+        ttk.Button(footer, text="关闭", style="Primary.TButton", command=dialog.destroy).grid(row=1, column=3)
+
+    def _dependency_install_target(self) -> tuple[tuple[str, ...] | None, str]:
+        from desktop_environment import dependency_install_command
+
+        return dependency_install_command(
+            Path(__file__).resolve().parent,
+            sys.prefix,
+            sys.executable,
+            frozen=bool(getattr(sys, "frozen", False)),
+        )
+
+    def _start_dependency_install(self, refresh: Callable[[], None]) -> None:
+        if self._busy or self._dependency_install_active or self._closing:
+            return
+        command, detail = self._dependency_install_target()
+        if command is None:
+            self._environment_install_status.set(detail)
+            if self._environment_install_button is not None:
+                self._environment_install_button.configure(state="disabled")
+            return
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=Path(__file__).resolve().parent,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                shell=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+            )
+        except OSError as exc:
+            self._environment_install_status.set(f"无法启动依赖安装：{exc}")
+            self._append_log(f"启动项目依赖安装失败：{exc}")
+            messagebox.showerror("无法安装项目依赖", str(exc), parent=self._environment_dialog or self.root)
+            return
+
+        self._dependency_process = process
+        self._dependency_events = queue.Queue()
+        self._dependency_install_active = True
+        self._dependency_cancel_requested = False
+        self._environment_refresh = refresh
+        self._environment_install_status.set("正在安装项目 requirements.txt 中的依赖…")
+        if self._environment_install_button is not None:
+            self._environment_install_button.configure(state="disabled")
+        self.status_text.set("正在安装项目依赖")
+        self._append_log("启动项目依赖安装：" + subprocess.list2cmdline(command))
+        self._append_log("目标仅为当前项目 .venv；正在接收 pip 输出。")
+        self._set_busy(self._busy)
+
+        def collect_output() -> None:
+            if process.stdout is not None:
+                with process.stdout:
+                    for line in process.stdout:
+                        self._dependency_events.put(("line", line.rstrip("\r\n")))
+            self._dependency_events.put(("exit", process.wait()))
+
+        threading.Thread(target=collect_output, name="LocalGazeDependencyLog", daemon=True).start()
+        if self._poll_after_id is None:
+            self._schedule_poll()
+
+    def _poll_dependency_install(self) -> None:
+        while True:
+            try:
+                event, value = self._dependency_events.get_nowait()
+            except queue.Empty:
+                break
+            if event == "line":
+                line = str(value)
+                if line:
+                    self._append_log("依赖安装：" + line)
+                    if self._environment_dialog is not None and self._environment_dialog.winfo_exists():
+                        self._environment_install_status.set(line)
+                continue
+
+            exit_code = int(value)
+            cancelled = self._dependency_cancel_requested
+            self._dependency_process = None
+            self._dependency_install_active = False
+            self._dependency_cancel_requested = False
+            self._set_busy(self._busy)
+            if cancelled:
+                status = "依赖安装已取消；当前 Python 包可能只安装了一部分。"
+                result = "已取消"
+            elif exit_code == 0:
+                importlib.invalidate_caches()
+                status = "依赖安装成功；建议重新启动 LocalGaze 后继续使用。"
+                result = "完成，退出码 0；建议重启软件"
+            else:
+                status = f"依赖安装失败，退出码 {exit_code}；请查看底部运行日志。"
+                result = f"失败，退出码 {exit_code}"
+            self._environment_install_status.set(status)
+            self._append_log("项目依赖安装" + result + "。")
+            if self._environment_install_button is not None and not self._closing:
+                command, _detail = self._dependency_install_target()
+                self._environment_install_button.configure(state="normal" if command is not None else "disabled")
+            if self._environment_refresh is not None and not self._closing:
+                self._environment_refresh()
+            if not self._closing:
+                self.status_text.set("依赖安装完成 · 建议重启软件" if exit_code == 0 else "依赖安装结束 · 查看运行日志")
+            self._environment_refresh = None
 
     def _show_guide(self) -> None:
-        self.notebook.select(self._guide_tab_id)
+        try:
+            self._select_page(self._page_ids.index(self._guide_tab_id))
+        except ValueError:
+            self.notebook.select(self._guide_tab_id)
         self._load_guide_text()
         self.guide_text.yview_moveto(0)
         self.guide_text.focus_set()
@@ -977,80 +1340,45 @@ class DesktopApp:
             text = self.guide_path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             text = f"无法读取使用指南。\n\n文件：{self.guide_path}\n\n原因：{exc}"
-            self.guide_status.set("README 使用指南未能加载；请检查文件路径和 UTF-8 编码。")
+            self.guide_status.set("快速开始未能加载；请检查文件路径和 UTF-8 编码。")
         else:
-            self.guide_status.set("README 使用指南已加载。")
+            self.guide_status.set("快速开始已加载。")
         self.guide_text.configure(state="normal")
         self.guide_text.delete("1.0", "end")
         self.guide_text.insert("1.0", text)
-        self._guide_image_refs: list[tk.PhotoImage] = []
-        self._guide_image_sources = []
-        self._guide_image_width = 0
-        if self.guide_image_dir.is_dir():
-            from PIL import Image, ImageTk
-
-            width = max(300, self.guide_text.winfo_width() - 24) if self.guide_text.winfo_width() > 1 else 740
-            for image_path in sorted(self.guide_image_dir.glob("*.png")):
-                try:
-                    with Image.open(image_path) as source:
-                        original = source.convert("RGB")
-                    target_width = min(width, original.width)
-                    resized = original.resize((target_width, max(1, round(original.height * target_width / original.width))), Image.Resampling.LANCZOS)
-                    image = ImageTk.PhotoImage(resized, master=self.root)
-                except (OSError, tk.TclError):
-                    continue
-                name = self.guide_text.image_create("end", image=image, align="center")
-                self.guide_text.insert("end", "\n")
-                self._guide_image_sources.append((name, original))
-                self._guide_image_refs.append(image)
-            self._guide_image_width = width
         self.guide_text.configure(state="disabled")
 
-    def _queue_guide_image_resize(self, _event: tk.Event) -> None:
-        if self._guide_resize_after is not None:
-            self.root.after_cancel(self._guide_resize_after)
-        self._guide_resize_after = self.root.after(120, self._resize_guide_images)
-
-    def _resize_guide_images(self) -> None:
-        from PIL import Image, ImageTk
-
-        self._guide_resize_after = None
-        width = max(1, self.guide_text.winfo_width() - 24)
-        if width == self._guide_image_width or not self.guide_text.winfo_ismapped():
-            return
-        references = []
-        for name, original in self._guide_image_sources:
-            target_width = min(width, original.width)
-            resized = original.resize((target_width, max(1, round(original.height * target_width / original.width))), Image.Resampling.LANCZOS)
-            image = ImageTk.PhotoImage(resized, master=self.root)
-            self.guide_text.image_configure(name, image=image)
-            references.append(image)
-        self._guide_image_refs = references
-        self._guide_image_width = width
-
     def _build_log_panel(self) -> None:
-        panel = ttk.Frame(self.root, padding=(18, 4, 18, 7))
-        panel.grid(row=2, column=0, sticky="ew")
+        self.root.rowconfigure(1, weight=0, minsize=62)
+        panel = ttk.Frame(self.root, style="App.TFrame", padding=(14, 4, 14, 7))
+        panel.grid(row=1, column=0, sticky="ew")
         panel.columnconfigure(0, weight=1)
         head = ttk.Frame(panel)
         head.grid(row=0, column=0, sticky="ew")
-        head.columnconfigure(0, weight=1)
+        head.columnconfigure(1, weight=1)
         self._log_expanded = False
-        self.log_toggle = ttk.Button(head, text="展开任务记录 ▸", style="Quiet.TButton", command=self._toggle_log)
-        self.log_toggle.grid(row=0, column=0, sticky="w")
-        self.cancel_button = ttk.Button(head, text="取消当前任务", style="Danger.TButton", command=self.cancel_job, state="disabled")
-        self.cancel_button.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self.status_label = ttk.Label(head, textvariable=self.status_text, style="Status.TLabel")
+        self.status_label.grid(row=0, column=0, sticky="w", padx=(0, 9))
+        self.capture_quality_label = ttk.Label(head, textvariable=self.capture_quality_text, style="PageHint.TLabel")
+        self.capture_quality_label.grid(row=0, column=1, sticky="ew", padx=(0, 9))
+        self.log_toggle = ttk.Button(head, text="任务记录 ▸", style="Quiet.TButton", command=self._toggle_log)
+        self.log_toggle.grid(row=0, column=2, sticky="w")
+        actions = ttk.Frame(panel)
+        actions.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        actions.columnconfigure(0, weight=1)
+        self.cancel_button = ttk.Button(actions, text="取消当前任务", style="Danger.TButton", command=self.cancel_job, state="disabled")
+        self.cancel_button.grid(row=0, column=1, sticky="e", padx=(8, 0))
         self.outputs_menu = tk.Menu(self.root, tearoff=0)
-        self.open_outputs_button = ttk.Menubutton(head, text="打开本次输出 ▾", menu=self.outputs_menu, state="disabled")
-        self.open_outputs_button.grid(row=0, column=2, sticky="e", padx=(0, 8))
+        self.open_outputs_button = ttk.Menubutton(actions, text="打开本次输出 ▾", menu=self.outputs_menu, state="disabled")
+        self.open_outputs_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
         self.job_logs_menu = tk.Menu(self.root, tearoff=0)
-        self.open_job_logs_button = ttk.Menubutton(head, text="查看持久日志 ▾", menu=self.job_logs_menu, state="disabled")
-        self.open_job_logs_button.grid(row=0, column=3, sticky="e", padx=(0, 8))
-        self.clear_log_button = ttk.Button(head, text="清空", style="Quiet.TButton", command=self.clear_log)
-        self.clear_log_button.grid(row=0, column=4, sticky="e")
+        self.open_job_logs_button = ttk.Menubutton(actions, text="持久日志 ▾", menu=self.job_logs_menu, state="disabled")
+        self.open_job_logs_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
+        self.clear_log_button = ttk.Button(actions, text="清空", style="Quiet.TButton", command=self.clear_log)
+        self.clear_log_button.grid(row=0, column=4, sticky="e", padx=(8, 0))
         self.clear_log_button.grid_remove()
-        self.log = ScrolledText(panel, height=4, wrap="word", background="#FFFFFF", foreground=_COLORS["ink"], insertbackground=_COLORS["ink"], relief="flat", borderwidth=1, highlightthickness=1, highlightbackground=_COLORS["line"], padx=10, pady=8, font=("Consolas", 9))
-        self.log.grid(row=1, column=0, sticky="ew")
+        self.log = ScrolledText(panel, height=4, wrap="word", background="#FFFFFF", foreground=_COLORS["ink"], insertbackground=_COLORS["ink"], relief="flat", borderwidth=1, highlightthickness=1, highlightbackground=_COLORS["line"], padx=10, pady=8, font=("Consolas", -17))
+        self.log.grid(row=2, column=0, sticky="ew")
         self.log.grid_remove()
         self.log.configure(state="disabled")
         self._append_log("就绪。任务仅会在你点击对应操作后启动。")
@@ -1059,12 +1387,12 @@ class DesktopApp:
         if self._log_expanded:
             self.log.grid_remove()
             self.clear_log_button.grid_remove()
-            self.log_toggle.configure(text="展开任务记录 ▸")
+            self.log_toggle.configure(text="任务记录 ▸")
             self._log_expanded = False
         else:
-            self.log.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+            self.log.grid(row=2, column=0, sticky="ew", pady=(4, 0))
             self.clear_log_button.grid()
-            self.log_toggle.configure(text="收起任务记录 ▾")
+            self.log_toggle.configure(text="任务记录 ▾")
             self._log_expanded = True
 
     def _entry_row(self, card: ttk.Frame, row: int, label: str, variable: tk.StringVar, *, browse: str | None, hint: str | None = None) -> tuple[ttk.Entry, ttk.Button | None]:
@@ -1085,6 +1413,34 @@ class DesktopApp:
             hint_label = ttk.Label(field, text=hint, style="Muted.TLabel", justify="left")
             hint_label.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 0))
             self._wrap_to_width(hint_label, field, minimum=160)
+        return entry, button
+
+    def _compact_entry_row(
+        self,
+        card: ttk.Frame,
+        row: int,
+        label: str,
+        variable: tk.StringVar,
+        *,
+        browse: str | None,
+    ) -> tuple[ttk.Entry, ttk.Button | None]:
+        card.columnconfigure(1, weight=1)
+        ttk.Label(card, text=label, style="Card.TLabel", width=8).grid(
+            row=row, column=0, sticky="w", pady=(7, 0)
+        )
+        entry = ttk.Entry(card, textvariable=variable, width=24)
+        entry.grid(row=row, column=1, sticky="ew", padx=(8, 8), pady=(7, 0))
+        self._input_controls.append(entry)
+        button = None
+        if browse:
+            button = ttk.Button(
+                card,
+                text="浏览…",
+                style="Quiet.TButton",
+                command=lambda b=browse, v=variable, l=label: self._browse(b, v, l),
+            )
+            button.grid(row=row, column=2, sticky="e", pady=(7, 0))
+            self._browse_controls.append(button)
         return entry, button
 
     def _browse(self, kind: str, variable: tk.StringVar, label: str) -> None:
@@ -1277,6 +1633,11 @@ class DesktopApp:
             if unit not in _PREPROCESS_TIME_UNITS:
                 raise ValueError("预处理必须选择 seconds、milliseconds 或 microseconds。")
             payload["time_unit"] = unit
+            from desktop_configuration import normalize_preprocess_parameters
+
+            payload["preprocess_config"] = normalize_preprocess_parameters(
+                {name: variable.get() for name, variable in self.preprocess_config_vars.items()}
+            )
         elif kind == "analyze":
             unit_label = self.analysis_time_unit_label.get()
             if unit_label not in _TIME_UNITS:
@@ -1416,7 +1777,7 @@ class DesktopApp:
         self._start_job("analyze", "分析与导出")
 
     def _start_job(self, kind: str, display_name: str) -> None:
-        if self._closing or self._busy:
+        if self._closing or self._busy or self._dependency_install_active:
             return
         try:
             payload = self._payload(kind)
@@ -1449,18 +1810,25 @@ class DesktopApp:
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
+        locked = busy or self._closing or self._dependency_install_active
         for widget in (*self._input_controls, *self._browse_controls, *self._action_controls):
             try:
-                widget.configure(state="disabled" if busy or self._closing else "normal")
+                widget.configure(state="disabled" if locked else "normal")
             except tk.TclError:
                 pass
         try:
             self.cancel_button.configure(state="normal" if busy and not self._closing else "disabled")
         except (AttributeError, tk.TclError):
             pass
-        if not busy and not self._closing:
+        if not busy and not self._closing and not self._dependency_install_active:
             self._refresh_analysis_parameter_states()
         self._sync_capture_retry_button()
+        install_button = self._environment_install_button
+        if install_button is not None:
+            command, _detail = self._dependency_install_target()
+            install_button.configure(
+                state="normal" if command is not None and not busy and not self._closing and not self._dependency_install_active else "disabled"
+            )
 
     def _sync_capture_retry_button(self) -> None:
         button = getattr(self, "capture_export_retry_button", None)
@@ -1469,6 +1837,7 @@ class DesktopApp:
         snapshot = Path(self.capture_snapshot_path.get().strip()).expanduser()
         enabled = (
             not self._busy
+            and not self._dependency_install_active
             and not self._closing
             and snapshot.name.endswith(".capture-snapshot.json")
             and snapshot.is_file()
@@ -1483,6 +1852,7 @@ class DesktopApp:
             context = Path(self.capture_context_path.get().strip()).expanduser()
             context_enabled = (
                 not self._busy
+                and not self._dependency_install_active
                 and not self._closing
                 and context.name.endswith(".capture-context.json")
                 and context.is_file()
@@ -1501,9 +1871,10 @@ class DesktopApp:
                 self.cancel_button.configure(state="disabled")
 
     def _schedule_poll(self) -> None:
-        if self._closing and self._manager is None:
+        if self._closing and (self._manager is None or not self._manager.busy) and not self._dependency_install_active:
             return
-        self._poll_after_id = self.root.after(250, self._poll_jobs)
+        if self._poll_after_id is None:
+            self._poll_after_id = self.root.after(250, self._poll_jobs)
 
     def _poll_jobs(self) -> None:
         self._poll_after_id = None
@@ -1513,14 +1884,15 @@ class DesktopApp:
                 if event.get("job_id") != self._active_job_id:
                     continue
                 self._handle_event(event)
+        self._poll_dependency_install()
         if self._closing:
-            if manager is None or manager.closed:
+            if (manager is None or manager.closed or not manager.busy) and not self._dependency_install_active:
                 self.root.destroy()
                 return
             self._schedule_poll()
         elif self._auto_poll:
             self._schedule_poll()
-        elif manager is not None and manager.busy:
+        elif (manager is not None and manager.busy) or self._dependency_install_active:
             self._schedule_poll()
 
     def _handle_event(self, event: dict[str, object]) -> None:
@@ -1814,9 +2186,6 @@ class DesktopApp:
     def request_close(self) -> None:
         if self._closing:
             return
-        if self._guide_resize_after is not None:
-            self.root.after_cancel(self._guide_resize_after)
-            self._guide_resize_after = None
         self._unbind_mousewheel()
         for canvas, after_id in tuple(self._scrollregion_after.items()):
             try:
@@ -1825,19 +2194,43 @@ class DesktopApp:
                 pass
         self._scrollregion_after.clear()
         manager = self._manager
-        if manager is None or not manager.busy:
+        if (manager is None or not manager.busy) and not self._dependency_install_active:
             self.root.destroy()
             return
         self._closing = True
         self._set_busy(True)
-        self.status_text.set("正在安全关闭 · 等待任务进程退出")
-        self._append_log("窗口关闭时已请求停止当前任务；将在所属进程退出后关闭窗口。")
-        manager.shutdown()
+        self.status_text.set("正在安全关闭 · 等待任务和依赖安装进程退出")
+        if manager is not None and manager.busy:
+            self._append_log("窗口关闭时已请求停止当前任务；将在所属进程退出后关闭窗口。")
+            manager.shutdown()
+        process = self._dependency_process
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                self._append_log("依赖安装进程已退出；正在读取最终日志和退出状态。")
+            except OSError as exc:
+                self._append_log(f"无法停止本程序启动的依赖安装进程：{exc}；窗口将继续等待它退出。")
+            else:
+                self._dependency_cancel_requested = True
+                self._append_log("窗口关闭时已请求停止本程序启动的依赖安装；正在等待该进程退出。")
         if self._poll_after_id is None:
             self._schedule_poll()
 
     def _update_tab_state(self, _event=None) -> None:
-        # Do not let tab changes re-enable a control while a task is active.
+        try:
+            index = self.notebook.index(self.notebook.select())
+        except (tk.TclError, ValueError):
+            index = 0
+        if 0 <= index < len(self._page_info):
+            self._active_page_index = index
+            number, title, hint = self._page_info[index]
+            self.page_number_label.configure(text=number)
+            self.page_title_label.configure(text=title)
+            self.page_hint_label.configure(text=hint)
+            for position, button in enumerate(self._page_buttons):
+                button.configure(style="NavActive.TButton" if position == index else "Nav.TButton")
+        # Do not let page changes re-enable a control while a task is active.
         if self._busy:
             self._set_busy(True)
 
@@ -1861,21 +2254,21 @@ class DesktopApp:
         self.log.configure(state="disabled")
 
     def _open_guide(self, path: Path) -> None:
-        self._open_guide_file(path, "README 使用指南")
+        self._open_guide_file(path, "快速开始")
 
     @staticmethod
-    def _user_manual_path() -> Path:
+    def _study_materials_path() -> Path:
         source_root = Path(__file__).resolve().parent
         candidates = []
         if getattr(sys, "frozen", False):
-            candidates.append(Path(sys.executable).resolve().parent / "docs" / _USER_MANUAL_FILENAME)
+            candidates.append(Path(sys.executable).resolve().parent / "docs" / "skills" / _SKILL_GUIDE_FILENAME)
             runtime_root = Path(getattr(sys, "_MEIPASS", source_root))
-            candidates.append(runtime_root / "docs" / _USER_MANUAL_FILENAME)
-        candidates.append(source_root / "docs" / _USER_MANUAL_FILENAME)
+            candidates.append(runtime_root / "docs" / "skills" / _SKILL_GUIDE_FILENAME)
+        candidates.append(source_root / "docs" / "skills" / _SKILL_GUIDE_FILENAME)
         return next((path for path in candidates if path.is_file()), candidates[0])
 
-    def _open_user_manual(self) -> None:
-        self._open_guide_file(self._user_manual_path(), "产品介绍与使用手册 PDF")
+    def _open_study_materials(self) -> None:
+        self._open_guide_file(self._study_materials_path(), "实验设计资料")
 
     def _open_guide_file(self, path: Path, label: str) -> None:
         if not path.is_file():

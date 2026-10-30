@@ -46,7 +46,7 @@ def ico_frames(path):
     return result
 
 
-def entry_info(path, expected_icons, subsystem):
+def entry_info(path, expected_icons, subsystem, expected_version):
     with pefile.PE(str(path)) as pe:
         assert pe.FILE_HEADER.Machine == 0x8664, "Not an x64 executable"
         assert pe.OPTIONAL_HEADER.Subsystem == subsystem, "Wrong Windows subsystem"
@@ -70,7 +70,7 @@ def entry_info(path, expected_icons, subsystem):
         version = pe.VS_FIXEDFILEINFO[0]
         actual_version = [version.FileVersionMS >> 16, version.FileVersionMS & 0xffff,
                           version.FileVersionLS >> 16, version.FileVersionLS & 0xffff]
-        assert actual_version == [2026, 10, 16, 0], actual_version
+        assert actual_version == list(expected_version), actual_version
         return {"sha256": digest(path), "bytes": path.stat().st_size,
                 "x64": True, "subsystem": subsystem, "file_version": actual_version,
                 "exact_embedded_icon_sizes": sorted(expected_icons)}
@@ -111,6 +111,18 @@ def verify_public_manifest(bundle):
         if path.is_file() and path.name != "release-manifest.json"
     }
     assert actual == set(listed), f"Bundle inventory mismatch: missing={sorted(actual-set(listed))[:5]}, extra={sorted(set(listed)-actual)[:5]}"
+    required_docs = {
+        "docs/快速开始.txt",
+        "docs/skills/README.txt",
+        "docs/skills/README.md",
+        "docs/skills/实验设计填写模板.md",
+        "docs/skills/localgaze-study-config/SKILL.md",
+        "docs/skills/localgaze-study-config/assets/study-intake-template.csv",
+    }
+    missing_docs = required_docs - set(listed)
+    assert not missing_docs, f"Required user guides or skill files are missing: {sorted(missing_docs)}"
+    assert not any(path.startswith("assets/guide/") for path in actual), "Legacy guide screenshots must not be distributed"
+    assert "docs/LocalGaze产品介绍与使用手册.pdf" not in actual, "Legacy PDF must not be distributed"
     return manifest, len(listed)
 
 
@@ -134,11 +146,12 @@ def main():
     project, bundle, launcher = project.resolve(), bundle.resolve(), launcher.resolve()
     manifest, verified_bundle_files = verify_public_manifest(bundle)
     verified_sources = verify_source_inventory(project, source_inventory_path)
+    expected_version = tuple(int(part) for part in manifest["project_version"].split("."))
     expected_icons = ico_frames(project / "assets" / "localgaze.ico")
-    entries = {str(launcher): entry_info(launcher, expected_icons, 2)}
+    entries = {str(launcher): entry_info(launcher, expected_icons, 2, expected_version)}
     for name, subsystem in (("LocalGaze.exe", 2), ("LocalGazeWorker.exe", 3), ("ROIDrawing.exe", 2)):
         path = bundle / name
-        entries[str(path)] = entry_info(path, expected_icons, subsystem)
+        entries[str(path)] = entry_info(path, expected_icons, subsystem, expected_version)
     result = {
         "status": "passed",
         "bundle": str(bundle),

@@ -40,16 +40,25 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LocalGaze-2026.10.16.0-Windows-x64
+          name: LocalGaze-2026.10.31.0-Windows-x64
           path: |
-            release/LocalGaze-2026.10.16.0.zip
-            build-artifacts/windows-2026.10.16.0/delivery-manifest.json
+            release/LocalGaze-2026.10.31.0.zip
+            build-artifacts/windows-2026.10.31.0/delivery-manifest.json
+            build-artifacts/windows-2026.10.31.0/checksums.sha256
+            build-artifacts/windows-2026.10.31.0/attachments/LocalGaze-study-config-2026.10.31.0.zip
+            build-artifacts/windows-2026.10.31.0/attachments/LocalGaze-study-config-2026.10.31.0.md
+            build-artifacts/windows-2026.10.31.0/attachments/skill-package-manifest.json
       - name: Publish tagged GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
+          fail_on_unmatched_files: true
           files: |
-            release/LocalGaze-2026.10.16.0.zip
-            build-artifacts/windows-2026.10.16.0/delivery-manifest.json
+            release/LocalGaze-2026.10.31.0.zip
+            build-artifacts/windows-2026.10.31.0/delivery-manifest.json
+            build-artifacts/windows-2026.10.31.0/checksums.sha256
+            build-artifacts/windows-2026.10.31.0/attachments/LocalGaze-study-config-2026.10.31.0.zip
+            build-artifacts/windows-2026.10.31.0/attachments/LocalGaze-study-config-2026.10.31.0.md
+            build-artifacts/windows-2026.10.31.0/attachments/skill-package-manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

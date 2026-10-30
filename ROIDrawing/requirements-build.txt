@@ -1,0 +1,4 @@
+-r requirements.txt
+pyinstaller==6.16.0
+pyinstaller-hooks-contrib==2026.9
+Pillow==13.0.0

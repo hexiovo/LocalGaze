@@ -1,15 +1,16 @@
 # LocalGaze 版本
 
-- Windows 程序版本：`2026.10.16.0`
+- Windows 程序版本：`2026.10.31.0`
 - 分析方法版本：`LocalGaze-analysis-1.2.0`
 - 目标平台：Windows 10/11，64 位
 
 ## 当前交付
 
-源码仓库可通过 `build_tools/windows/build.ps1` 构建 Windows 便携 ZIP。GitHub Actions 手动运行时上传构建产物；推送 `v*` 标签后，通过构建与验证才创建 GitHub Release。远程发布状态与下载以 [GitHub Releases](https://github.com/hexiovo/LocalGaze/releases) 为准。
+源码仓库可通过 `build_tools/windows/build.ps1` 构建 Windows x64 便携 ZIP。ZIP 内含当前快速开始和实验设计材料；Release 另附完整技能 ZIP、单文件粘贴稿、交付清单与 SHA-256 校验文件。GitHub Actions 手动运行时上传构建产物；推送 `v*` 标签后，通过构建与验证才创建 GitHub Release。远程发布状态与下载以 [GitHub Releases](https://github.com/hexiovo/LocalGaze/releases) 为准。
 
 ## 更新记录
 
+- 2026-10-31：更新 Windows 便携版本号；随包提供当前快速开始、实验设计模板和完整 `localgaze-study-config` 技能资料。便携包及技能附件均由本地脚本构建并提供文件校验信息。分析方法版本保持不变。
 - 2026-10-16：登记云端 Python 构建环境使用的 Tcl `8.6.15` 官方原始许可及哈希，同时保留 Tcl `8.6.12` 的支持，避免许可收集仅兼容本地运行环境。
 - 2026-10-16：程序版本更新为 `2026.10.16.0`；通过 Git 属性保留原始第三方许可文件的字节，修复云端 Windows 检出时换行转换导致 SHA-256 校验失败的问题。分析方法版本保持 `LocalGaze-analysis-1.2.0`。
 - 2026-10-16：首次标签构建在第三方许可收集阶段失败，尚未发布 Release；为发布工作流补充失败日志输出，以核对云端与本地构建环境的差异。

@@ -1,0 +1,6 @@
+section,parameter,value,unit,source,status,risk
+study,study_id,DEMO_ONLY_001,id,synthetic example only,proposed,Not a real study identifier
+preprocessing,time_unit,seconds,s,illustrative desktop default,proposed,Confirm device time unit
+preprocessing,preset,analysis,enum,desktop job source contract,known,CLI default is legacy
+analysis,primary_estimand,,outcome unit,example has no study data,missing,No inferential plan or run
+statistics,execution_status,NOT_RUN,status,synthetic illustrative example,known,No real inferential result

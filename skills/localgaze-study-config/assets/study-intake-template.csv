@@ -1,0 +1,24 @@
+section,field,question,answer,unit,source,status,risk_or_next_action
+study,study_id,请填写假名化研究代号,,,,missing,必填且不含个人信息
+study,question,主要研究问题是什么？,,,,missing,决定估计量
+study,primary_outcome,主要眼动指标和时间窗是什么？,,,,missing,统计计划阻断项
+study,primary_contrast,比较哪些组或条件？对比方向是什么？,,,,missing,统计计划阻断项
+assignment,assignment_unit,条件分配给什么单位：人/会话/试次/刺激？,,,,missing,影响独立性
+assignment,analysis_unit,推断单位是什么？,,,,missing,防止伪重复
+assignment,design,组间/配对/重复/交叉/嵌套/交叉因子设计？,,,,missing,决定模型结构
+assignment,ids,哪些假名 ID 标识被试/会话/试次/刺激？,,,,missing,配对与嵌套
+hardware,device,眼动仪型号、采样模式和采样率？,,,,missing,确认设备及时间质量
+hardware,screen,实际活动屏幕分辨率/物理尺寸/观看距离/原点/DPI？,,,,missing,角度单位和 ROI 的必需信息
+hardware,clock,时间单位、原点、时区、触发源及同步时钟？,,,,missing,事件对齐必需
+input,files,文件路径、工作表/分隔符/编码/小数点格式？,,,,missing,需确认代表性样本
+input,columns,时间/原始X/Y/状态/眨眼/瞳孔/试次/事件分别是哪列？,,,,missing,列映射不清则停止
+input,validity,哪一列明确表示该样本为有效实测？,,,,missing,分析读取必需
+preprocess,preset,使用关闭 XY 插值的 analysis，还是有依据地选其他 preset？,,,,proposed,CLI 默认 legacy
+preprocess,qc,缺失/坏段/可疑段如何标记和排除？,,,,missing,阈值是项目候选值
+features,groups,哪些描述性/事件/ROI 指标对应问题？,,,,proposed,候选特征不是真值
+roi,reference,ROI 和 gaze 是否有同一已验证坐标参考？,,,,missing,不满足则 ROI 不可计算
+statistics,missingness,缺失、排除、无效事件和拟合失败如何处理？,,,,missing,需预先定义
+statistics,multiplicity,哪些确认性对比属于同一多重检验家族？,,,,proposed,多检验时必须定义
+statistics,transform,变换、适用范围、参数和反变换解释？,,,,proposed,不得按 p 值选变换
+outputs,output_root,新输出文件夹路径？,,,,missing,空目录且不能覆盖原始数据
+runtime,versions,Python/系统/LocalGaze/依赖版本？,,,,missing,统计脚本需复现

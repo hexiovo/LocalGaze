@@ -132,7 +132,7 @@ def _payload(kind: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(f"unknown job kind: {kind}")
     if not isinstance(payload, Mapping):
         raise TypeError("job payload must be a mapping")
-    allowed = {"source_path", "source_paths", "recursive", "analysis_output_base", "data_path", "model_path", "mapping_table_path", "output_root", "time_unit", "session_id", "roi_path", "correction_path", "target_xy_px", "model_name", "feature_formula_version", "motion_monitor_enabled", "save_motion_keyframes", "snapshot_path", "context_path", "selected_metrics", "analysis_config", "table_format"}
+    allowed = {"source_path", "source_paths", "recursive", "analysis_output_base", "data_path", "model_path", "mapping_table_path", "output_root", "time_unit", "session_id", "roi_path", "correction_path", "target_xy_px", "model_name", "feature_formula_version", "motion_monitor_enabled", "save_motion_keyframes", "snapshot_path", "context_path", "selected_metrics", "analysis_config", "table_format", "preprocess_config"}
     if set(payload) - allowed:
         raise ValueError("unsupported job payload fields: " + ", ".join(sorted(set(payload) - allowed)))
     if kind == "capture_export_retry":
@@ -157,6 +157,8 @@ def _payload(kind: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("snapshot_path is only accepted by capture_export_retry")
     if "mapping_table_path" in payload and kind != "preprocess":
         raise ValueError("mapping_table_path is only accepted by preprocess")
+    if "preprocess_config" in payload and kind != "preprocess":
+        raise ValueError("preprocess_config is only accepted by preprocess")
     if kind != "analyze" and any(name in payload for name in ("source_paths", "recursive", "analysis_output_base")):
         raise ValueError(f"{kind} does not accept batch-analysis inputs")
     if kind == "known_target_offset" and any(payload.get(name) is not None for name in ("source_path", "data_path")):
@@ -234,6 +236,9 @@ def _payload(kind: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     if kind in {"capture", "known_target_offset", "independent_validation"}:
         required.add("model_path")
     if kind == "preprocess":
+        from desktop_configuration import normalize_preprocess_parameters
+
+        result["preprocess_config"] = normalize_preprocess_parameters(result.get("preprocess_config", {}))
         mapping_table_path = result.get("mapping_table_path")
         if mapping_table_path is not None:
             if any(name in result for name in ("source_path", "data_path")) or result.get("model_path") is not None or result.get("session_id") is not None:
@@ -1925,7 +1930,7 @@ def run_worker_task(kind: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     if kind == "preprocess":
         from pre import PreprocessConfig
 
-        cfg = PreprocessConfig(time_unit=request["time_unit"])
+        cfg = PreprocessConfig(time_unit=request["time_unit"], **request["preprocess_config"])
         if request.get("mapping_table_path"):
             from pre.pipeline import preprocess_mapping_table
 

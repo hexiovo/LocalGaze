@@ -73,15 +73,6 @@ def check_installation(report_path: Path) -> int:
                 import eyetrax.movement
                 import eyetrax.movement_runtime
                 from PIL import Image
-                guide_assets = sorted((Path(__file__).resolve().parent / "assets" / "guide").glob("*.png"))
-                expected_guide_assets = [
-                    "01-workbench.png", "02-analysis-selection.png", "03-analysis-parameters.png",
-                    "04-known-target.png", "05-environment-check.png",
-                ]
-                assert [path.name for path in guide_assets] == expected_guide_assets
-                for path in guide_assets:
-                    with Image.open(path) as image:
-                        image.verify()
                 assert "output_root" in inspect.signature(capture_persistence.cleanup_capture_sidecars).parameters
                 from eyetracking_pipeline import retry_capture_from_context, retry_capture_export
                 assert callable(retry_capture_from_context)
@@ -92,7 +83,7 @@ def check_installation(report_path: Path) -> int:
                 assert sizes == [(s, s) for s in (16, 20, 24, 30, 32, 36, 40, 44, 48, 64, 96, 128, 256)]
                 return {"durable_modules": "imported", "verified_root_cleanup": True,
                         "recovery_entry_points": "available", "icon_sizes": sizes,
-                        "guide_screenshots": [path.name for path in guide_assets]}
+                        "guide_screenshots": "not bundled; current text guides are checked separately"}
             check("durable_capture_modules_and_brand_assets", durable_capture_and_brand_assets)
 
             def versioned_algorithm_modules():
@@ -164,17 +155,15 @@ def check_installation(report_path: Path) -> int:
                     assert len(app.notebook.tabs()) == 5
                     guide = app.guide_path.read_text(encoding="utf-8")
                     rendered_guide = app.guide_text.get("1.0", "end-1c")
-                    guide_image_count = len(tuple(app.guide_image_dir.glob("*.png")))
                     assert rendered_guide.startswith(guide)
-                    assert app.guide_path.name == "README.md"
-                    assert guide_image_count > 0
-                    assert len(app.guide_text.image_names()) == guide_image_count
-                    manual_path = app._user_manual_path()
-                    assert manual_path.is_file() and manual_path.read_bytes().startswith(b"%PDF-")
-                    opened_manual = []
-                    app._open_guide_file = lambda path, label: opened_manual.append((path, label))
-                    app.manual_button.invoke()
-                    assert opened_manual == [(manual_path, "产品介绍与使用手册 PDF")]
+                    assert app.guide_path.name == "快速开始.txt"
+                    assert "2026.10.31.0" in guide
+                    materials_path = app._study_materials_path()
+                    assert materials_path.is_file() and materials_path.suffix == ".txt"
+                    opened_materials = []
+                    app._open_guide_file = lambda path, label: opened_materials.append((path, label))
+                    app.materials_button.invoke()
+                    assert opened_materials == [(materials_path, "实验设计资料")]
                     assert app._manager is None
                 finally:
                     root.destroy()
@@ -185,9 +174,8 @@ def check_installation(report_path: Path) -> int:
                     root.update_idletasks()
                 finally:
                     root.destroy()
-                return {"guide_loaded": True, "guide": str(app.guide_path),
-                        "product_manual": str(manual_path),
-                        "guide_screenshots": guide_image_count,
+                return {"guide_loaded": True, "quick_start": str(app.guide_path),
+                        "study_materials": str(materials_path),
                         "workbench_pages": 5, "ROI_view_constructed": True, "visible_window": False}
             check("hidden_tk_workbench_guide_and_roi", hidden_views)
 

@@ -14,6 +14,18 @@ venv/
 /build-artifacts/
 /release/
 /tmp/
+**/.build-venv/
+/deliverables/
+/downloads/
+/portable/
+/deployment/
+/Eye_Tracking_Preprocessing_Pipeline.md
+/docs/LocalGaze产品介绍与使用手册.pdf
+/assets/guide/01-workbench.png
+/assets/guide/02-analysis-selection.png
+/assets/guide/03-analysis-parameters.png
+/assets/guide/04-known-target.png
+/assets/guide/05-environment-check.png
 
 # Local data and runtime output
 /SampleData/

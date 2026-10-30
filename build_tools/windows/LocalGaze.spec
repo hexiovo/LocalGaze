@@ -5,15 +5,12 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 
 root = Path(SPECPATH).resolve().parents[1]
 datas = [(str(root / "README.md"), ".")]
-user_manual = root / "docs" / "LocalGaze产品介绍与使用手册.pdf"
-if not user_manual.is_file():
-    raise RuntimeError(f"Product and user manual is missing: {user_manual}")
-datas += [(str(user_manual), "docs")]
+for guide in (root / "docs" / "快速开始.txt", root / "docs" / "skills" / "README.txt"):
+    if not guide.is_file():
+        raise RuntimeError(f"Current user guide is missing: {guide}")
+    datas.append((str(guide), "docs" if guide.parent == root / "docs" else "docs/skills"))
 datas += [(str(root / "assets" / "localgaze.ico"), "assets"),
           (str(root / "assets" / "localgaze.png"), "assets")]
-datas += [(str(path), "assets/guide") for path in sorted((root / "assets" / "guide").glob("*.png"))]
-if not any(Path(source).name == "01-workbench.png" for source, _ in datas):
-    raise RuntimeError("Current guide screenshots are missing from assets/guide")
 datas += collect_data_files("mediapipe")
 for package in ("mediapipe", "numpy", "scikit-learn", "opencv-contrib-python", "pandas"):
     datas += copy_metadata(package)
